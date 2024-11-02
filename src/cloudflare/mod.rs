@@ -9,6 +9,7 @@ const CLOUDFLARE_POLL_RATE: &str = "CLOUDFLARE_POLL_RATE";
 const CLOUDFLARE_API_KEY: &str = "CLOUDFLARE_API_KEY";
 const CLOUDFLARE_ZONE_ID: &str = "CLOUDFLARE_ZONE_ID";
 
+#[derive(Default)]
 pub struct CloudFlareApi {
     config: CloudFlareConfig,
     records: Vec<CloudFlareRecord>,

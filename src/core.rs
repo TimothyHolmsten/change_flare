@@ -48,6 +48,15 @@ impl<T: ApiTrait> Updater<T> {
     }
 }
 
+impl<T> Default for Updater<T>
+where
+    T: ApiTrait + Default,
+{
+    fn default() -> Self {
+        Self { api: T::default() }
+    }
+}
+
 pub trait ApiTrait: Sized {
     type RecordType: Record<Self> + Clone;
 
