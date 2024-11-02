@@ -230,7 +230,7 @@ pub struct CloudFlareRecord {
     record_type: String, // A, AAAA, CNAME, etc.
     ttl: u32,
     proxied: bool,
-    zone_id: String,
+    zone_id: String,           // Remove this?
     record_id: Option<String>, // Only used if updating an existing record
 }
 
@@ -270,4 +270,88 @@ struct CloudflareResult {
     ttl: u32,
     proxied: bool,
     zone_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use mockito::Mock;
+
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn setup_mock_api() -> (CloudFlareApi, String) {
+        let api_key = "test_api_key".to_string();
+        let zone_id = "test_zone_id".to_string();
+
+        let mut api = CloudFlareApi::new(60, api_key.clone());
+        api.config.zone_id = zone_id.clone();
+
+        (api, zone_id)
+    }
+
+    fn create_mock_record() -> CloudFlareRecord {
+        CloudFlareRecord {
+            content: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            name: "test.example.com".to_string(),
+            record_type: "A".to_string(),
+            ttl: 1,
+            proxied: false,
+            zone_id: "test_zone_id".to_string(),
+            record_id: Some("record123".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_cloudflare_config_new() {
+        let api_key = "test_key".to_string();
+        let config = CloudFlareConfig::new(30, api_key.clone());
+
+        assert_eq!(config.poll_rate, 60); // Should be minimum 60
+        assert_eq!(config.api_key, api_key);
+    }
+
+    #[test]
+    fn test_record_update_content() {
+        let record = create_mock_record();
+        let new_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+
+        let updated_record = record.update_content(new_ip);
+
+        assert_eq!(updated_record.content, new_ip);
+        assert_eq!(updated_record.name, record.name);
+        assert_eq!(updated_record.record_type, record.record_type);
+    }
+
+
+    #[test]
+    fn test_update_record() {
+        let (mut api, zone_id) = setup_mock_api();
+        let record = create_mock_record();
+
+        let mock_response = ureq::json!({
+            "success": true,
+            "result": {
+                "id": "record123",
+                "name": "test.example.com",
+                "content": "127.0.0.1",
+                "type": "A",
+                "ttl": 1,
+                "proxied": false,
+                "zone_id": zone_id
+            }
+        });
+
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("PUT", "/client/v4/zones/test_zone_id/dns_records/record123")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create();
+
+        let updated_record = api.update_record(&record);
+
+        assert_eq!(updated_record.name, record.name);
+        assert_eq!(updated_record.content, record.content);
+    }
 }
