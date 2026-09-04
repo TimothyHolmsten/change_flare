@@ -106,6 +106,8 @@ run_case "skips when not ahead of base" 0 "Skipping: cursor/example-c390 has no 
 run_case "creates PR when ahead and none exists" 0 "Opened https://github.com/example/repo/pull/99" \
   MOCK_AHEAD_BY=1 MOCK_EXISTING_PR=
 
+run_case "creates PR with multi-line commit message" 0 "Opened https://github.com/example/repo/pull/99" \
+  MOCK_AHEAD_BY=1 MOCK_EXISTING_PR= MOCK_COMMIT_MSG=$'feat: title line\n\nbody line'
 run_case "dry run does not create" 0 "DRY_RUN: would create PR" \
   DRY_RUN=1 MOCK_AHEAD_BY=1
 
