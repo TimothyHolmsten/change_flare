@@ -73,7 +73,7 @@ impl CloudflareClient {
         Self {
             agent,
             api_base: api_base.into().trim_end_matches('/').to_string(),
-            authorization: format!("Bearer {}", token.into()),
+            authorization: format!("{} {}", "Bearer", token.into()),
             zone_id: zone_id.into(),
         }
     }
