@@ -20,3 +20,11 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  open-pr-script:
+    name: Open-PR helper tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Test open-pr-if-needed
+      run: bash scripts/test-open-pr-if-needed.sh
