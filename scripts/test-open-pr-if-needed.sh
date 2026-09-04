@@ -38,7 +38,7 @@ case "$args" in
   "api repos/"*"/commits/"*" --jq .sha")
     printf '%s\n' "${MOCK_SHA:-abc123}"
     ;;
-  "api repos/"*"/commits/"*" --jq .commit.message")
+  "api repos/"*"/commits/"*" --jq "*)
     printf '%s\n' "${MOCK_COMMIT_MSG:-feat: example change}"
     ;;
   "pr create "*)
