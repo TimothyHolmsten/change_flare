@@ -25,8 +25,6 @@ if [[ -z "$repo" || -z "$branch" ]]; then
   exit 1
 fi
 
-owner="${repo%%/*}"
-
 default_branch="$(
   run_gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name
 )"
@@ -41,10 +39,11 @@ if [[ "$branch" == "$default_branch" ]]; then
   exit 0
 fi
 
+# Use --head BRANCH, not OWNER:BRANCH. The latter returns no rows for this repo.
 existing="$(
   run_gh pr list \
     --repo "$repo" \
-    --head "${owner}:${branch}" \
+    --head "$branch" \
     --state open \
     --json number \
     --jq '.[0].number // empty'
@@ -92,13 +91,25 @@ if [[ "${DRY_RUN:-}" == "1" ]]; then
   exit 0
 fi
 
+set +e
 url="$(
   run_gh pr create \
     --repo "$repo" \
     --base "$default_branch" \
     --head "$branch" \
     --title "$title" \
-    --body "$body"
+    --body "$body" 2>&1
 )"
+create_status=$?
+set -e
+
+if [[ "$create_status" -ne 0 ]]; then
+  if [[ "$url" == *"already exists"* ]]; then
+    echo "Skipping: $url"
+    exit 0
+  fi
+  echo "$url" >&2
+  exit "$create_status"
+fi
 
 echo "Opened $url"

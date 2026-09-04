@@ -46,6 +46,11 @@ case "$args" in
       echo "GraphQL: Resource not accessible by integration (createPullRequest)" >&2
       exit 1
     fi
+    if [[ "${MOCK_CREATE_FAIL:-}" == "already" ]]; then
+      echo 'a pull request for branch "cursor/example-c390" into branch "main" already exists:'
+      echo 'https://github.com/example/repo/pull/2'
+      exit 1
+    fi
     printf '%s\n' "${MOCK_PR_URL:-https://github.com/example/repo/pull/99}"
     ;;
   *)
@@ -75,8 +80,8 @@ MOCK
     return
   fi
 
-  if [[ -n "$expect_stdout" ]] && ! grep -F -- "$expect_stdout" "$out" >/dev/null; then
-    echo "FAIL $name (stdout missing: $expect_stdout)"
+  if [[ -n "$expect_stdout" ]] && ! grep -F -- "$expect_stdout" "$out" >/dev/null && ! grep -F -- "$expect_stdout" "$err" >/dev/null; then
+    echo "FAIL $name (output missing: $expect_stdout)"
     echo "stdout: $(cat "$out")"
     echo "stderr: $(cat "$err")"
     FAIL=$((FAIL + 1))
@@ -103,6 +108,12 @@ run_case "creates PR when ahead and none exists" 0 "Opened https://github.com/ex
 
 run_case "dry run does not create" 0 "DRY_RUN: would create PR" \
   DRY_RUN=1 MOCK_AHEAD_BY=1
+
+run_case "treats already-exists create as success" 0 "already exists" \
+  MOCK_AHEAD_BY=1 MOCK_EXISTING_PR= MOCK_CREATE_FAIL=already
+
+run_case "surfaces other create failures" 1 "Resource not accessible by integration" \
+  MOCK_AHEAD_BY=1 MOCK_EXISTING_PR= MOCK_CREATE_FAIL=1
 
 # Missing env should fail
 tmp="$(mktemp -d)"
