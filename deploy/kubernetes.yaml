@@ -1,0 +1,82 @@
+# Example Deployment for an origin / reverse-proxy node.
+# Create the secret first, then apply the Deployment.
+#
+#   kubectl create secret generic change-flare \
+#     --from-literal=CLOUDFLARE_API_TOKEN='***' \
+#     --from-literal=CLOUDFLARE_ZONE_ID='***' \
+#     --from-literal=CLOUDFLARE_RECORD_NAMES='lb.example.com'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: change-flare
+  labels:
+    app: change-flare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: change-flare
+  template:
+    metadata:
+      labels:
+        app: change-flare
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: change-flare
+          image: change_flare:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: change-flare
+                  key: CLOUDFLARE_API_TOKEN
+            - name: CLOUDFLARE_ZONE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: change-flare
+                  key: CLOUDFLARE_ZONE_ID
+            - name: CLOUDFLARE_RECORD_NAMES
+              valueFrom:
+                secretKeyRef:
+                  name: change-flare
+                  key: CLOUDFLARE_RECORD_NAMES
+            - name: CHANGE_FLARE_HEALTH_BIND
+              value: "0.0.0.0:8080"
+            - name: CHANGE_FLARE_IP_MODE
+              value: ipv4
+            - name: RUST_LOG
+              value: info
+          ports:
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
