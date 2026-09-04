@@ -67,9 +67,7 @@ if [[ -z "$sha" ]]; then
   sha="$(run_gh api "repos/${repo}/commits/${branch}" --jq .sha)"
 fi
 
-title="$(
-  run_gh api "repos/${repo}/commits/${sha}" --jq '.commit.message' | head -n 1
-)"
+title="$(run_gh api "repos/${repo}/commits/${sha}" --jq '.commit.message | split("\n")[0]')"
 title="${title:-${branch}}"
 
 body="$(
