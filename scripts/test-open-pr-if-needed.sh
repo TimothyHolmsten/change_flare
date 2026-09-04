@@ -121,6 +121,53 @@ else
 fi
 rm -rf "$tmp"
 
+# Production path: GH_BIN unset, `gh` resolved from PATH (must not recurse).
+path_tmp="$(mktemp -d)"
+cat >"$path_tmp/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >>"${MOCK_GH_LOG}"
+args="$*"
+case "$args" in
+  "repo view "*" --json defaultBranchRef --jq .defaultBranchRef.name")
+    printf '%s\n' "main"
+    ;;
+  "pr list --repo "*" --head "*" --state open --json number --jq "*)
+    printf '%s\n' "12"
+    ;;
+  *)
+    echo "unexpected gh invocation: $args" >&2
+    exit 99
+    ;;
+esac
+MOCK
+chmod +x "$path_tmp/gh"
+path_out="$(mktemp)"
+path_err="$(mktemp)"
+path_log="$(mktemp)"
+if env -u GH_BIN \
+  MOCK_GH_LOG="$path_log" \
+  PATH="$path_tmp:$PATH" \
+  GITHUB_REPOSITORY="TimothyHolmsten/change_flare" \
+  GITHUB_REF_NAME="cursor/example-c390" \
+  GITHUB_SHA="deadbeef" \
+  bash "$SCRIPT" >"$path_out" 2>"$path_err"; then
+  if grep -F -- "Skipping: open pull request #12 already exists" "$path_out" >/dev/null; then
+    echo "PASS PATH gh without GH_BIN"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL PATH gh without GH_BIN (stdout)"
+    cat "$path_out"
+    FAIL=$((FAIL + 1))
+  fi
+else
+  echo "FAIL PATH gh without GH_BIN (exit $?)"
+  cat "$path_out"
+  cat "$path_err"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$path_tmp" "$path_out" "$path_err" "$path_log"
+
 echo
 echo "$PASS passed, $FAIL failed"
 if [[ "$FAIL" -ne 0 ]]; then

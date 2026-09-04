@@ -6,10 +6,14 @@
 # "Resource not accessible by integration"). GitHub Actions GITHUB_TOKEN can.
 set -euo pipefail
 
-gh_bin="${GH_BIN:-gh}"
-
-gh() {
-  "$gh_bin" "$@"
+# Never name a function `gh` that execs `$GH_BIN` defaulting to `gh` — that
+# recurses until bash SIGSEGV (exit 139) when GH_BIN is unset in Actions.
+run_gh() {
+  if [[ -n "${GH_BIN:-}" ]]; then
+    "$GH_BIN" "$@"
+  else
+    command gh "$@"
+  fi
 }
 
 repo="${GITHUB_REPOSITORY:-}"
@@ -24,7 +28,7 @@ fi
 owner="${repo%%/*}"
 
 default_branch="$(
-  gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name
+  run_gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name
 )"
 
 if [[ -z "$default_branch" ]]; then
@@ -38,7 +42,7 @@ if [[ "$branch" == "$default_branch" ]]; then
 fi
 
 existing="$(
-  gh pr list \
+  run_gh pr list \
     --repo "$repo" \
     --head "${owner}:${branch}" \
     --state open \
@@ -52,7 +56,7 @@ if [[ -n "$existing" ]]; then
 fi
 
 ahead_by="$(
-  gh api "repos/${repo}/compare/${default_branch}...${branch}" --jq .ahead_by
+  run_gh api "repos/${repo}/compare/${default_branch}...${branch}" --jq .ahead_by
 )"
 
 if [[ "${ahead_by:-0}" -eq 0 ]]; then
@@ -61,11 +65,11 @@ if [[ "${ahead_by:-0}" -eq 0 ]]; then
 fi
 
 if [[ -z "$sha" ]]; then
-  sha="$(gh api "repos/${repo}/commits/${branch}" --jq .sha)"
+  sha="$(run_gh api "repos/${repo}/commits/${branch}" --jq .sha)"
 fi
 
 title="$(
-  gh api "repos/${repo}/commits/${sha}" --jq '.commit.message' | head -n 1
+  run_gh api "repos/${repo}/commits/${sha}" --jq '.commit.message' | head -n 1
 )"
 title="${title:-${branch}}"
 
@@ -89,7 +93,7 @@ if [[ "${DRY_RUN:-}" == "1" ]]; then
 fi
 
 url="$(
-  gh pr create \
+  run_gh pr create \
     --repo "$repo" \
     --base "$default_branch" \
     --head "$branch" \
