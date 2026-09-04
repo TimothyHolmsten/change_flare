@@ -148,8 +148,9 @@ impl CloudflareClient {
             "{}/zones/{}/dns_records/{record_id}",
             self.api_base, self.zone_id
         );
+        let content_str = content.to_string();
         let body = PatchBody {
-            content: &content.to_string(),
+            content: &content_str,
         };
         let mut response = self
             .agent
