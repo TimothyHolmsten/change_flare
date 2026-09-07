@@ -34,7 +34,8 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 | `src/cloudflare.rs` | `ureq` 3 client: list `A`/`AAAA`, PATCH content only |
 | `src/updater.rs` | Reconcile loop; skip Cloudflare when public IP is unchanged |
 | `src/health.rs` | Optional TCP HTTP `/healthz` + `/readyz` |
-| `deploy/kubernetes.yaml` | Example Deployment + Secret |
+| `deploy/kubernetes.yaml` | Example Deployment + Secret (hostNetwork for STUN) |
+| `deploy/change-flare.service` | systemd unit for a bare-metal origin |
 | `Dockerfile` | Multi-stage distroless image |
 
 ## Toolchain
@@ -46,7 +47,7 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 
 - **One HTTP stack**: `ureq` 3 with a long-lived `Agent` (connection pool). Do not add `reqwest` unless async becomes a hard requirement.
 - **PATCH, not PUT**: [Update DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/) (`PATCH /zones/{zone_id}/dns_records/{id}`) with `{ "content": "<ip>" }` so TTL/proxied/tags stay intact.
-- **Filter server-side** with `type=A` / `type=AAAA` and paginate (`per_page=100`). Never rewrite CNAME/MX/TXT.
+- **Filter server-side** with `type=A` / `type=AAAA` and paginate (`per_page=100`). Request only families enabled by `CHANGE_FLARE_IP_MODE`. When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, also pass `name=<fqdn>` (exact). Never rewrite CNAME/MX/TXT.
 - **Prefer `CLOUDFLARE_RECORD_NAMES`**. Updating every address record in a zone is supported for tiny/dedicated zones only; log a warning when the filter is empty.
 - **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS).
 - **No secrets in logs, tests, or docs**. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_API_KEY` are env-only; `.env` is gitignored.
@@ -62,7 +63,7 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 
 ## Cloudflare API notes
 
-- List: `GET /zones/{zone_id}/dns_records?type=A|AAAA&per_page=&page=`
+- List: `GET /zones/{zone_id}/dns_records?type=A|AAAA&name=&per_page=&page=`
 - Edit: `PATCH /zones/{zone_id}/dns_records/{dns_record_id}`
 - Auth: `Authorization: Bearer <token>`
 - STUN: `stun.cloudflare.com:3478` (IPv4 and IPv6 as needed)
@@ -70,6 +71,7 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 ## Cloud-native expectations
 
 - Config from environment (and optional `.env` for local runs).
-- Container image is non-root distroless.
+- Container image is non-root distroless. Example k8s pod uses `hostNetwork` so STUN sees the node public IP.
 - Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync).
+- systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes.
 - SIGINT/SIGTERM stop the poll loop after the current sleep slice (250ms).

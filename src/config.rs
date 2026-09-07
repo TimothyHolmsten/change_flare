@@ -87,6 +87,16 @@ impl Config {
             health_bind,
         })
     }
+
+    /// DNS record types this node should reconcile (`A` and/or `AAAA`).
+    pub fn dns_types(&self) -> Vec<&'static str> {
+        match (self.ipv4, self.ipv6) {
+            (true, true) => vec!["A", "AAAA"],
+            (true, false) => vec!["A"],
+            (false, true) => vec!["AAAA"],
+            (false, false) => Vec::new(),
+        }
+    }
 }
 
 fn required(name: &'static str) -> Result<String, Error> {
@@ -130,7 +140,10 @@ fn env_truthy(name: &str) -> bool {
 pub fn name_matches(record_name: &str, wanted: &str) -> bool {
     let record = record_name.trim_end_matches('.').to_ascii_lowercase();
     let wanted = wanted.trim_end_matches('.').to_ascii_lowercase();
-    record == wanted || record.starts_with(&format!("{wanted}."))
+    record == wanted
+        || record
+            .strip_prefix(wanted.as_str())
+            .is_some_and(|rest| rest.starts_with('.'))
 }
 
 #[cfg(test)]
@@ -150,5 +163,135 @@ mod tests {
     #[test]
     fn poll_floor_is_sixty() {
         assert_eq!(MIN_POLL_SECS, 60);
+    }
+
+    #[test]
+    fn dns_types_follow_ip_mode() {
+        let mut cfg = Config {
+            api_token: "t".into(),
+            zone_id: "z".into(),
+            record_names: Vec::new(),
+            poll_interval: Duration::from_secs(60),
+            api_base: DEFAULT_API_BASE.into(),
+            stun_server: DEFAULT_STUN.into(),
+            ipv4: true,
+            ipv6: false,
+            always_reconcile: false,
+            health_bind: None,
+        };
+        assert_eq!(cfg.dns_types(), vec!["A"]);
+        cfg.ipv6 = true;
+        assert_eq!(cfg.dns_types(), vec!["A", "AAAA"]);
+        cfg.ipv4 = false;
+        assert_eq!(cfg.dns_types(), vec!["AAAA"]);
+    }
+
+    #[test]
+    fn from_env_loads_and_floors_poll() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let snapshot = EnvSnapshot::capture();
+
+        unsafe {
+            std::env::set_var("CLOUDFLARE_API_TOKEN", "test-token");
+            std::env::remove_var("CLOUDFLARE_API_KEY");
+            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
+            std::env::set_var(
+                "CLOUDFLARE_RECORD_NAMES",
+                "lb.example.com, origin.example.com",
+            );
+            std::env::set_var("CLOUDFLARE_POLL_RATE", "10");
+            std::env::set_var("CHANGE_FLARE_IP_MODE", "both");
+            std::env::set_var("CLOUDFLARE_API_BASE", "http://127.0.0.1:9");
+            std::env::set_var("CHANGE_FLARE_ALWAYS_RECONCILE", "yes");
+            std::env::remove_var("CHANGE_FLARE_HEALTH_BIND");
+            std::env::remove_var("CLOUDFLARE_STUN_SERVER");
+        }
+
+        let cfg = Config::from_env().unwrap();
+        snapshot.restore();
+
+        assert_eq!(cfg.zone_id, "zone-1");
+        assert_eq!(
+            cfg.record_names,
+            vec!["lb.example.com", "origin.example.com"]
+        );
+        assert_eq!(cfg.poll_interval, Duration::from_secs(60));
+        assert!(cfg.ipv4 && cfg.ipv6);
+        assert!(cfg.always_reconcile);
+        assert_eq!(cfg.api_base, "http://127.0.0.1:9");
+        assert_eq!(cfg.stun_server, DEFAULT_STUN);
+        assert!(cfg.health_bind.is_none());
+    }
+
+    #[test]
+    fn from_env_rejects_bad_ip_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let snapshot = EnvSnapshot::capture();
+
+        unsafe {
+            std::env::set_var("CLOUDFLARE_API_TOKEN", "test-token");
+            std::env::remove_var("CLOUDFLARE_API_KEY");
+            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
+            std::env::set_var("CHANGE_FLARE_IP_MODE", "v4");
+            std::env::remove_var("CLOUDFLARE_RECORD_NAMES");
+            std::env::remove_var("CLOUDFLARE_POLL_RATE");
+            std::env::remove_var("CHANGE_FLARE_HEALTH_BIND");
+            std::env::remove_var("CHANGE_FLARE_ALWAYS_RECONCILE");
+        }
+
+        let err = Config::from_env().unwrap_err();
+        snapshot.restore();
+        assert!(err.to_string().contains("CHANGE_FLARE_IP_MODE"));
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const ENV_KEYS: &[&str] = &[
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_API_KEY",
+        "CLOUDFLARE_ZONE_ID",
+        "CLOUDFLARE_RECORD_NAMES",
+        "CLOUDFLARE_POLL_RATE",
+        "CHANGE_FLARE_IP_MODE",
+        "CHANGE_FLARE_HEALTH_BIND",
+        "CLOUDFLARE_API_BASE",
+        "CLOUDFLARE_STUN_SERVER",
+        "CHANGE_FLARE_ALWAYS_RECONCILE",
+    ];
+
+    struct EnvSnapshot {
+        values: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvSnapshot {
+        fn capture() -> Self {
+            Self {
+                values: ENV_KEYS
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                    .collect(),
+            }
+        }
+
+        fn restore(self) {
+            restore_env(&self.values);
+        }
+    }
+
+    impl Drop for EnvSnapshot {
+        fn drop(&mut self) {
+            restore_env(&self.values);
+        }
+    }
+
+    fn restore_env(values: &[(String, Option<String>)]) {
+        for (key, value) in values {
+            unsafe {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
     }
 }
