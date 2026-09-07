@@ -1,0 +1,22 @@
+# Origin DDNS agent. STUN must see the host public IP, so this uses host networking.
+#
+#   docker compose -f deploy/compose.yaml up --build
+#
+# Secrets come from a gitignored `.env` in the repository root (same keys as `.env.example`).
+services:
+  change-flare:
+    build:
+      context: ..
+    image: change_flare:local
+    network_mode: host
+    env_file:
+      - ../.env
+    environment:
+      CHANGE_FLARE_HEALTH_BIND: "0.0.0.0:8080"
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

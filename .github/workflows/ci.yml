@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: "17 6 * * 1"
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -29,6 +33,13 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --all-targets --locked
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test open-pr-if-needed
+        run: bash scripts/test-open-pr-if-needed.sh
 
   audit:
     runs-on: ubuntu-latest

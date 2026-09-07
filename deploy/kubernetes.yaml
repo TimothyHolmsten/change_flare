@@ -56,12 +56,20 @@ spec:
               value: "0.0.0.0:8080"
             - name: CHANGE_FLARE_IP_MODE
               value: ipv4
+            - name: CLOUDFLARE_POLL_RATE
+              value: "300"
             - name: RUST_LOG
               value: info
           ports:
             - name: health
               containerPort: 8080
               protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 2
+            failureThreshold: 15
           livenessProbe:
             httpGet:
               path: /healthz
@@ -72,6 +80,7 @@ spec:
               path: /readyz
               port: health
             periodSeconds: 15
+            failureThreshold: 3
           resources:
             requests:
               cpu: 10m

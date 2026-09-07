@@ -14,9 +14,16 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
 MemoryDenyWriteExecute=true
 RestrictSUIDSGID=true
 LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
