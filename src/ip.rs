@@ -128,6 +128,7 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     let documentation = segments[0] == 0x2001 && segments[1] == 0xdb8;
     let site_local = (segments[0] & 0xffc0) == 0xfec0;
     !(documentation || site_local)
+}
 
 #[cfg(test)]
 mod tests {
