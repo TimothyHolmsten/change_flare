@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 
 use stunclient::StunClient;
@@ -35,13 +35,15 @@ pub fn discover(stun_server: &str, ipv4: bool, ipv6: bool) -> Result<PublicIps, 
 
     if ipv4 {
         match query(stun_server, false) {
-            Ok(ip) => ips.v4 = Some(ip),
+            Ok(ip) if is_public_ip(ip) => ips.v4 = Some(ip),
+            Ok(ip) => errors.push(format!("ipv4: STUN mapped non-public address {ip}")),
             Err(e) => errors.push(format!("ipv4: {e}")),
         }
     }
     if ipv6 {
         match query(stun_server, true) {
-            Ok(ip) => ips.v6 = Some(ip),
+            Ok(ip) if is_public_ip(ip) => ips.v6 = Some(ip),
+            Ok(ip) => errors.push(format!("ipv6: STUN mapped non-public address {ip}")),
             Err(e) => errors.push(format!("ipv6: {e}")),
         }
     }
@@ -83,6 +85,51 @@ fn query(stun_server: &str, ipv6: bool) -> Result<IpAddr, Error> {
     Ok(mapped.ip())
 }
 
+/// Cloudflare should only publish globally routable addresses.
+pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_public_v4(ip),
+        IpAddr::V6(ip) => is_public_v6(ip),
+    }
+}
+
+fn is_public_v4(ip: Ipv4Addr) -> bool {
+    if ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || ip.is_documentation()
+    {
+        return false;
+    }
+    let octets = ip.octets();
+    // 100.64.0.0/10 (CGNAT) and 198.18.0.0/15 (benchmarking)
+    let cgnat = octets[0] == 100 && octets[1] & 0xc0 == 64;
+    let benchmarking = octets[0] == 198 && octets[1] & 0xfe == 18;
+    !cgnat && !benchmarking
+}
+
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_public_v4(mapped);
+    }
+    if ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+        || ip.is_unicast_link_local()
+        || ip.is_unique_local()
+    {
+        return false;
+    }
+    let segments = ip.segments();
+    // 2001:db8::/32 documentation; fec0::/10 deprecated site-local
+    let documentation = segments[0] == 0x2001 && segments[1] == 0xdb8;
+    let site_local = (segments[0] & 0xffc0) == 0xfec0;
+    !(documentation || site_local)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +150,21 @@ mod tests {
             Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
         );
         assert_eq!(ips.for_record_type("CNAME"), None);
+    }
+
+    #[test]
+    fn rejects_non_public_mapped_addresses() {
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))));
+        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111
+        ))));
     }
 }

@@ -6,9 +6,9 @@ This is an origin process, not a Cloudflare Worker. DNS writes go through the [C
 
 Each poll:
 
-1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`).
-2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). FQDNs in `CLOUDFLARE_RECORD_NAMES` are filtered server-side with `name`; host labels are matched locally.
-3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path.
+1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, documentation) are discarded.
+2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). FQDNs in `CLOUDFLARE_RECORD_NAMES` are filtered server-side with `name` (trailing dots stripped); host labels are matched locally.
+3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`5xx` responses are retried.
 
 ## Setup
 
@@ -50,6 +50,12 @@ docker run --rm --network host --env-file .env change_flare
 
 `--network host` is important: STUN must observe the node's public address, not a container NAT.
 
+Compose equivalent (reads `.env` from the repo root):
+
+```bash
+docker compose -f deploy/compose.yaml up --build
+```
+
 ### systemd
 
 Install the binary, copy `deploy/change-flare.service`, and put secrets in `/etc/change_flare.env` (same keys as `.env.example`).
@@ -63,7 +69,7 @@ sudo systemctl enable --now change-flare
 
 ### Kubernetes
 
-Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (liveness) and `/readyz` (ready after the first successful sync). Keep `replicas: 1` for a given DNS name; multiple writers would race.
+Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (startup + liveness) and `/readyz` (ready after the first successful sync). Keep `replicas: 1` for a given DNS name; multiple writers would race.
 
 ## Develop
 

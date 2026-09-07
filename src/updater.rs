@@ -82,6 +82,12 @@ impl Updater {
         let records = self
             .client
             .list_address_records(&self.config.record_names, &self.config.dns_types())?;
+        if records.is_empty() && !self.config.record_names.is_empty() {
+            log::warn!(
+                "no matching A/AAAA records for {:?}",
+                self.config.record_names
+            );
+        }
         let report = apply_updates(&self.client, &records, &ips)?;
         self.last_ips = Some(ips);
         Ok(report)
@@ -98,6 +104,7 @@ pub fn apply_updates(
         examined: records.len(),
         ..SyncReport::default()
     };
+    let mut first_error = None;
 
     for record in records {
         let Some(desired) = ips.for_record_type(&record.record_type) else {
@@ -122,11 +129,25 @@ pub fn apply_updates(
             record.name,
             record.content
         );
-        client.patch_content(&record.id, desired)?;
-        report.updated += 1;
+        match client.patch_content(&record.id, desired) {
+            Ok(()) => report.updated += 1,
+            Err(err) => {
+                log::error!(
+                    "failed to update {} {}: {err}",
+                    record.record_type,
+                    record.name
+                );
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
     }
 
-    Ok(report)
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(report),
+    }
 }
 
 fn record_already_current(content: &str, desired: IpAddr) -> bool {
@@ -378,5 +399,81 @@ mod tests {
         let report = apply_updates(&client, &records, &ips).unwrap();
         patch.assert();
         assert_eq!(report.updated, 1);
+    }
+
+    #[test]
+    fn continues_after_one_patch_failure() {
+        let mut server = mockito::Server::new();
+        let first = server
+            .mock("PATCH", "/zones/zone1/dns_records/rec-a")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": false,
+                    "errors": [{ "message": "record locked" }]
+                })
+                .to_string(),
+            )
+            .create();
+        let second = server
+            .mock("PATCH", "/zones/zone1/dns_records/rec-b")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": true,
+                    "result": {
+                        "id": "rec-b",
+                        "name": "origin.example.com",
+                        "type": "A",
+                        "content": "198.51.100.7"
+                    }
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = [
+            DnsRecord {
+                id: "rec-a".into(),
+                name: "lb.example.com".into(),
+                record_type: "A".into(),
+                content: "203.0.113.10".into(),
+            },
+            DnsRecord {
+                id: "rec-b".into(),
+                name: "origin.example.com".into(),
+                record_type: "A".into(),
+                content: "203.0.113.11".into(),
+            },
+        ];
+        let ips = PublicIps {
+            v4: Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))),
+            v6: None,
+        };
+        let err = apply_updates(&client, &records, &ips).unwrap_err();
+        first.assert();
+        second.assert();
+        assert!(err.to_string().contains("record locked"));
+    }
+
+    #[test]
+    fn treats_compressed_and_expanded_ipv6_as_equal() {
+        let client = CloudflareClient::new("http://127.0.0.1:1", "token", "zone1");
+        let records = [DnsRecord {
+            id: "rec-aaaa".into(),
+            name: "lb.example.com".into(),
+            record_type: "AAAA".into(),
+            content: "2001:0db8:0000:0000:0000:0000:0000:0001".into(),
+        }];
+        let ips = PublicIps {
+            v4: None,
+            v6: Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))),
+        };
+        let report = apply_updates(&client, &records, &ips).unwrap();
+        assert_eq!(report.updated, 0);
+        assert_eq!(report.skipped, 1);
     }
 }

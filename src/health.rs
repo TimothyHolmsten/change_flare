@@ -77,8 +77,9 @@ fn serve(listener: TcpListener, state: HealthState) {
         let (status, reason, body) = route(request_line, &state);
 
         let response = format!(
-            "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nX-Last-Success-Epoch: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+            state.last_success_epoch()
         );
         let _ = stream.write_all(response.as_bytes());
     }
@@ -141,6 +142,9 @@ mod tests {
         let (status, body) = http_get(addr, "/readyz");
         assert_eq!(status, 200);
         assert_eq!(body, "ready");
+
+        let (status, _) = http_get(addr, "/livez");
+        assert_eq!(status, 200);
 
         let (status, _) = http_get(addr, "/nope");
         assert_eq!(status, 404);

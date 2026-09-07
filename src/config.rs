@@ -47,6 +47,11 @@ impl Config {
         }
 
         let poll_secs = env_u64("CLOUDFLARE_POLL_RATE").unwrap_or(DEFAULT_POLL_SECS);
+        if poll_secs < MIN_POLL_SECS {
+            log::warn!(
+                "CLOUDFLARE_POLL_RATE={poll_secs} is below {MIN_POLL_SECS}s; using {MIN_POLL_SECS}s"
+            );
+        }
         let poll_interval = Duration::from_secs(poll_secs.max(MIN_POLL_SECS));
 
         let ip_mode = std::env::var("CHANGE_FLARE_IP_MODE")
@@ -242,6 +247,27 @@ mod tests {
         let err = Config::from_env().unwrap_err();
         snapshot.restore();
         assert!(err.to_string().contains("CHANGE_FLARE_IP_MODE"));
+    }
+
+    #[test]
+    fn from_env_parses_health_bind() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let snapshot = EnvSnapshot::capture();
+
+        unsafe {
+            std::env::set_var("CLOUDFLARE_API_TOKEN", "test-token");
+            std::env::remove_var("CLOUDFLARE_API_KEY");
+            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
+            std::env::remove_var("CHANGE_FLARE_IP_MODE");
+            std::env::set_var("CHANGE_FLARE_HEALTH_BIND", "127.0.0.1:18080");
+        }
+
+        let cfg = Config::from_env().unwrap();
+        snapshot.restore();
+        assert_eq!(
+            cfg.health_bind,
+            Some("127.0.0.1:18080".parse().expect("bind addr"))
+        );
     }
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

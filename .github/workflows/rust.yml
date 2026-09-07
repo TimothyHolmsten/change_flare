@@ -1,3 +1,4 @@
+# Language-default workflow. Format, Clippy, audit, and image builds live in ci.yml.
 name: Rust
 
 on:
@@ -6,25 +7,32 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --locked --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --locked --verbose
 
   open-pr-script:
     name: Open-PR helper tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Test open-pr-if-needed
       run: bash scripts/test-open-pr-if-needed.sh

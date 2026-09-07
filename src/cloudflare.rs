@@ -1,6 +1,8 @@
 use std::net::IpAddr;
+use std::thread;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use ureq::Agent;
 
@@ -10,6 +12,8 @@ use crate::error::Error;
 const USER_AGENT: &str = concat!("change_flare/", env!("CARGO_PKG_VERSION"));
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const PAGE_SIZE: u32 = 100;
+const MAX_ATTEMPTS: u32 = 3;
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(30);
 
 /// Cloudflare DNS client. Reuses a single `ureq::Agent` (connection pool).
 pub struct CloudflareClient {
@@ -67,13 +71,14 @@ impl CloudflareClient {
     ) -> Self {
         let agent: Agent = Agent::config_builder()
             .timeout_global(Some(HTTP_TIMEOUT))
+            .http_status_as_error(false)
             .build()
             .into();
 
         Self {
             agent,
             api_base: api_base.into().trim_end_matches('/').to_string(),
-            authorization: format!("{} {}", "Bearer", token.into()),
+            authorization: format!("Bearer {}", token.into()),
             zone_id: zone_id.into(),
         }
     }
@@ -88,12 +93,12 @@ impl CloudflareClient {
         types: &[&str],
     ) -> Result<Vec<DnsRecord>, Error> {
         let mut records = Vec::new();
-        let exact_names = fqdn_filters(record_names);
+        let exact_names = exact_fqdn_filters(record_names);
 
         for record_type in types {
-            if let Some(names) = exact_names {
+            if let Some(names) = exact_names.as_deref() {
                 for name in names {
-                    records.extend(self.list_type(record_type, Some(name.as_str()))?);
+                    records.extend(self.list_type(record_type, Some(name))?);
                 }
             } else {
                 records.extend(self.list_type(record_type, None)?);
@@ -120,23 +125,20 @@ impl CloudflareClient {
         let list_url = format!("{}/zones/{}/dns_records", self.api_base, self.zone_id);
 
         loop {
-            let mut request = self
-                .agent
-                .get(&list_url)
-                .header("Authorization", &self.authorization)
-                .header("User-Agent", USER_AGENT)
-                .query("type", record_type)
-                .query("per_page", PAGE_SIZE.to_string())
-                .query("page", page.to_string());
-            if let Some(name) = name {
-                request = request.query("name", name);
-            }
-            let mut response = request.call()?;
-
-            let parsed: ApiResponse<Vec<RawRecord>> = response.body_mut().read_json()?;
-            if !parsed.success {
-                return Err(api_error(parsed.errors));
-            }
+            let parsed: ApiResponse<Vec<RawRecord>> = self.send_json(|| {
+                let mut request = self
+                    .agent
+                    .get(&list_url)
+                    .header("Authorization", &self.authorization)
+                    .header("User-Agent", USER_AGENT)
+                    .query("type", record_type)
+                    .query("per_page", PAGE_SIZE.to_string())
+                    .query("page", page.to_string());
+                if let Some(name) = name {
+                    request = request.query("name", name);
+                }
+                request.call()
+            })?;
 
             let page_records = parsed.result.unwrap_or_default();
             let count = page_records.len();
@@ -170,31 +172,92 @@ impl CloudflareClient {
         let body = PatchBody {
             content: &content_str,
         };
-        let mut response = self
-            .agent
-            .patch(&url)
-            .header("Authorization", &self.authorization)
-            .header("User-Agent", USER_AGENT)
-            .header("Content-Type", "application/json")
-            .send_json(&body)?;
-
-        let parsed: ApiResponse<RawRecord> = response.body_mut().read_json()?;
-        if !parsed.success {
-            return Err(api_error(parsed.errors));
-        }
+        self.send_json::<RawRecord>(|| {
+            self.agent
+                .patch(&url)
+                .header("Authorization", &self.authorization)
+                .header("User-Agent", USER_AGENT)
+                .header("Content-Type", "application/json")
+                .send_json(&body)
+        })?;
         Ok(())
+    }
+
+    fn send_json<T: DeserializeOwned>(
+        &self,
+        mut call: impl FnMut() -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<ApiResponse<T>, Error> {
+        let mut last_status = 0u16;
+        for attempt in 1..=MAX_ATTEMPTS {
+            let mut response = match call() {
+                Ok(response) => response,
+                Err(err) if attempt < MAX_ATTEMPTS => {
+                    log::warn!(
+                        "Cloudflare transport error (attempt {attempt}/{MAX_ATTEMPTS}): {err}"
+                    );
+                    thread::sleep(backoff(attempt));
+                    continue;
+                }
+                Err(err) => return Err(err.into()),
+            };
+
+            let status = response.status().as_u16();
+            last_status = status;
+            if retryable_status(status) && attempt < MAX_ATTEMPTS {
+                let wait =
+                    retry_after_delay(response.headers()).unwrap_or_else(|| backoff(attempt));
+                log::warn!(
+                    "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
+                );
+                continue;
+            }
+
+            let parsed: Result<ApiResponse<T>, _> = response.body_mut().read_json();
+            match parsed {
+                Ok(body) if (200..300).contains(&status) && body.success => return Ok(body),
+                Ok(body) => return Err(api_error(body.errors)),
+                Err(_) if !(200..300).contains(&status) => {
+                    return Err(Error::Http(format!("HTTP {status}")));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Err(Error::Http(format!("HTTP {last_status}")))
     }
 }
 
 /// Cloudflare `name` is an exact FQDN match. Host labels still need a full list.
-fn fqdn_filters(record_names: &[String]) -> Option<&[String]> {
+fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if record_names.is_empty() {
         return None;
     }
-    record_names
-        .iter()
-        .all(|name| name.contains('.'))
-        .then_some(record_names)
+    if !record_names.iter().all(|name| name.contains('.')) {
+        return None;
+    }
+    Some(
+        record_names
+            .iter()
+            .map(|name| name.trim_end_matches('.').to_ascii_lowercase())
+            .collect(),
+    )
+}
+
+fn retryable_status(status: u16) -> bool {
+    matches!(status, 429 | 502 | 503 | 504)
+}
+
+fn backoff(attempt: u32) -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(1)
+    } else {
+        Duration::from_millis(200 * u64::from(attempt))
+    }
+}
+
+fn retry_after_delay(headers: &ureq::http::HeaderMap) -> Option<Duration> {
+    let value = headers.get("retry-after")?.to_str().ok()?;
+    let secs: u64 = value.parse().ok()?;
+    Some(Duration::from_secs(secs).min(MAX_RETRY_WAIT))
 }
 
 fn api_error(errors: Option<Vec<ApiError>>) -> Error {
@@ -433,5 +496,81 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].id, "rec-1");
         assert_eq!(records[1].id, "rec-2");
+    }
+
+    #[test]
+    fn strips_trailing_dot_on_fqdn_filter() {
+        let mut server = mockito::Server::new();
+        let a = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("name".into(), "lb.example.com".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([{
+                "id": "rec-a",
+                "name": "lb.example.com",
+                "type": "A",
+                "content": "203.0.113.10"
+            }])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client
+            .list_address_records(&["lb.example.com.".to_string()], &["A"])
+            .unwrap();
+        a.assert();
+        assert_eq!(records.len(), 1);
+    }
+
+    #[test]
+    fn retries_rate_limit_then_succeeds() {
+        let mut server = mockito::Server::new();
+        let limited = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(429)
+            .with_header("retry-after", "0")
+            .with_body("rate limited")
+            .expect(1)
+            .create();
+        let ok = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        limited.assert();
+        ok.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn reads_error_body_from_http_error_status() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(401)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": false,
+                    "errors": [{ "message": "Authentication error" }],
+                    "result": null
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let err = client.list_type("A", None).unwrap_err();
+        assert!(err.to_string().contains("Authentication error"));
     }
 }
