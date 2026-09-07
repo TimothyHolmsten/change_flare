@@ -1,0 +1,20 @@
+---
+description: How to open GitHub pull requests from Cursor Cloud Agents
+alwaysApply: true
+---
+
+# GitHub pull requests
+
+The GitHub App token in this Cloud Agent sandbox cannot create pull requests.
+`gh pr create` returns `403 Resource not accessible by integration`. Git push works.
+
+Never tell the user to "check your branches" for that error. The branch is usually already on GitHub.
+
+Required workflow:
+
+1. Commit and `git push -u origin <branch>`.
+2. Create or update the PR with the **ManagePullRequest** tool. Do not use `gh pr create`.
+3. On push to `cursor/**`, `.github/workflows/open-cursor-pr.yml` also opens a PR if none exists.
+
+If ManagePullRequest fails, point the user at
+`https://github.com/TimothyHolmsten/change_flare/compare/main...<branch>?expand=1`.
