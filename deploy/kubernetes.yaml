@@ -1,4 +1,5 @@
-# Example Deployment for an origin / reverse-proxy node.
+# Example Deployment for a single origin / reverse-proxy node.
+# STUN must see that node's public IP, so this pod uses host networking.
 # Create the secret first, then apply the Deployment.
 #
 #   kubectl create secret generic change-flare \
@@ -21,6 +22,9 @@ spec:
       labels:
         app: change-flare
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 15
       securityContext:
         runAsNonRoot: true

@@ -81,7 +81,7 @@ impl Updater {
         log::info!("public IPs v4={:?} v6={:?}", ips.v4, ips.v6);
         let records = self
             .client
-            .list_address_records(&self.config.record_names)?;
+            .list_address_records(&self.config.record_names, &self.config.dns_types())?;
         let report = apply_updates(&self.client, &records, &ips)?;
         self.last_ips = Some(ips);
         Ok(report)
@@ -280,13 +280,6 @@ mod tests {
                 "content": "203.0.113.10"
             }])))
             .create();
-        let aaaa = server
-            .mock("GET", "/zones/zone1/dns_records")
-            .match_query(mockito::Matcher::UrlEncoded("type".into(), "AAAA".into()))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(list_body(serde_json::json!([])))
-            .create();
         let patch = server
             .mock("PATCH", "/zones/zone1/dns_records/rec-a")
             .with_status(200)
@@ -314,7 +307,6 @@ mod tests {
             .unwrap();
 
         a.assert();
-        aaaa.assert();
         patch.assert();
         assert_eq!(report.updated, 1);
     }
@@ -335,14 +327,6 @@ mod tests {
             }])))
             .expect(1)
             .create();
-        let aaaa = server
-            .mock("GET", "/zones/zone1/dns_records")
-            .match_query(mockito::Matcher::UrlEncoded("type".into(), "AAAA".into()))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(list_body(serde_json::json!([])))
-            .expect(1)
-            .create();
 
         let mut cfg = test_config(server.url());
         cfg.always_reconcile = false;
@@ -354,7 +338,6 @@ mod tests {
         updater.reconcile(ips.clone()).unwrap();
         let second = updater.reconcile(ips).unwrap();
         a.assert();
-        aaaa.assert();
         assert_eq!(second, SyncReport::default());
     }
 

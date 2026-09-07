@@ -1,0 +1,22 @@
+[Unit]
+Description=change_flare Cloudflare origin DDNS
+Documentation=https://github.com/TimothyHolmsten/change_flare
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/change_flare.env
+ExecStart=/usr/local/bin/change_flare
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

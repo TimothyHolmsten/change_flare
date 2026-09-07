@@ -78,11 +78,26 @@ impl CloudflareClient {
         }
     }
 
-    /// List A/AAAA records, optionally restricted to `record_names`.
-    pub fn list_address_records(&self, record_names: &[String]) -> Result<Vec<DnsRecord>, Error> {
+    /// List address records for the requested types (`A` / `AAAA`).
+    ///
+    /// FQDNs in `record_names` are filtered server-side with `name` (exact).
+    /// Host labels still list the type and match locally.
+    pub fn list_address_records(
+        &self,
+        record_names: &[String],
+        types: &[&str],
+    ) -> Result<Vec<DnsRecord>, Error> {
         let mut records = Vec::new();
-        for record_type in ["A", "AAAA"] {
-            records.extend(self.list_type(record_type)?);
+        let exact_names = fqdn_filters(record_names);
+
+        for record_type in types {
+            if let Some(names) = exact_names {
+                for name in names {
+                    records.extend(self.list_type(record_type, Some(name.as_str()))?);
+                }
+            } else {
+                records.extend(self.list_type(record_type, None)?);
+            }
         }
 
         if record_names.is_empty() {
@@ -99,21 +114,24 @@ impl CloudflareClient {
             .collect())
     }
 
-    fn list_type(&self, record_type: &str) -> Result<Vec<DnsRecord>, Error> {
+    fn list_type(&self, record_type: &str, name: Option<&str>) -> Result<Vec<DnsRecord>, Error> {
         let mut page = 1u32;
         let mut records = Vec::new();
+        let list_url = format!("{}/zones/{}/dns_records", self.api_base, self.zone_id);
 
         loop {
-            let url = format!(
-                "{}/zones/{}/dns_records?type={record_type}&per_page={PAGE_SIZE}&page={page}",
-                self.api_base, self.zone_id
-            );
-            let mut response = self
+            let mut request = self
                 .agent
-                .get(&url)
+                .get(&list_url)
                 .header("Authorization", &self.authorization)
                 .header("User-Agent", USER_AGENT)
-                .call()?;
+                .query("type", record_type)
+                .query("per_page", PAGE_SIZE.to_string())
+                .query("page", page.to_string());
+            if let Some(name) = name {
+                request = request.query("name", name);
+            }
+            let mut response = request.call()?;
 
             let parsed: ApiResponse<Vec<RawRecord>> = response.body_mut().read_json()?;
             if !parsed.success {
@@ -166,6 +184,17 @@ impl CloudflareClient {
         }
         Ok(())
     }
+}
+
+/// Cloudflare `name` is an exact FQDN match. Host labels still need a full list.
+fn fqdn_filters(record_names: &[String]) -> Option<&[String]> {
+    if record_names.is_empty() {
+        return None;
+    }
+    record_names
+        .iter()
+        .all(|name| name.contains('.'))
+        .then_some(record_names)
 }
 
 fn api_error(errors: Option<Vec<ApiError>>) -> Error {
@@ -230,7 +259,9 @@ mod tests {
             .create();
 
         let client = CloudflareClient::new(server.url(), "token", "zone1");
-        let records = client.list_address_records(&["lb".to_string()]).unwrap();
+        let records = client
+            .list_address_records(&["lb".to_string()], &["A", "AAAA"])
+            .unwrap();
 
         a.assert();
         aaaa.assert();
@@ -290,7 +321,117 @@ mod tests {
             .create();
 
         let client = CloudflareClient::new(server.url(), "token", "zone1");
-        let err = client.list_type("A").unwrap_err();
+        let err = client.list_type("A", None).unwrap_err();
         assert!(err.to_string().contains("Authentication error"));
+    }
+
+    #[test]
+    fn lists_only_requested_types() {
+        let mut server = mockito::Server::new();
+        let a = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+        let aaaa = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "AAAA".into()))
+            .expect(0)
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        a.assert();
+        aaaa.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn sends_exact_name_for_fqdn() {
+        let mut server = mockito::Server::new();
+        let a = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("name".into(), "lb.example.com".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([{
+                "id": "rec-a",
+                "name": "lb.example.com",
+                "type": "A",
+                "content": "203.0.113.10"
+            }])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client
+            .list_address_records(&["lb.example.com".to_string()], &["A"])
+            .unwrap();
+        a.assert();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "rec-a");
+    }
+
+    #[test]
+    fn paginates_list_results() {
+        let mut server = mockito::Server::new();
+        let page1 = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("page".into(), "1".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": true,
+                    "errors": [],
+                    "result": [{
+                        "id": "rec-1",
+                        "name": "a.example.com",
+                        "type": "A",
+                        "content": "203.0.113.1"
+                    }],
+                    "result_info": { "page": 1, "per_page": 100, "total_pages": 2 }
+                })
+                .to_string(),
+            )
+            .create();
+        let page2 = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("page".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": true,
+                    "errors": [],
+                    "result": [{
+                        "id": "rec-2",
+                        "name": "b.example.com",
+                        "type": "A",
+                        "content": "203.0.113.2"
+                    }],
+                    "result_info": { "page": 2, "per_page": 100, "total_pages": 2 }
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        page1.assert();
+        page2.assert();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "rec-1");
+        assert_eq!(records[1].id, "rec-2");
     }
 }
