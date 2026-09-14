@@ -3,7 +3,9 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const PROBE_IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 use crate::error::Error;
 
@@ -70,6 +72,8 @@ fn serve(listener: TcpListener, state: HealthState) {
         let Ok(mut stream) = incoming else {
             continue;
         };
+        let _ = stream.set_read_timeout(Some(PROBE_IO_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(PROBE_IO_TIMEOUT));
         let mut buf = [0u8; 256];
         let _ = stream.read(&mut buf);
         let request = String::from_utf8_lossy(&buf);

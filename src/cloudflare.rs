@@ -11,7 +11,7 @@ use crate::error::Error;
 
 const USER_AGENT: &str = concat!("change_flare/", env!("CARGO_PKG_VERSION"));
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
-const PAGE_SIZE: u32 = 100;
+const PAGE_SIZE: &str = "100";
 const MAX_ATTEMPTS: u32 = 3;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(30);
 
@@ -132,7 +132,7 @@ impl CloudflareClient {
                     .header("Authorization", &self.authorization)
                     .header("User-Agent", USER_AGENT)
                     .query("type", record_type)
-                    .query("per_page", PAGE_SIZE.to_string())
+                    .query("per_page", PAGE_SIZE)
                     .query("page", page.to_string());
                 if let Some(name) = name {
                     request = request.query("name", name);
@@ -209,6 +209,8 @@ impl CloudflareClient {
                 log::warn!(
                     "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
                 );
+                drop(response);
+                thread::sleep(wait);
                 continue;
             }
 
@@ -523,6 +525,19 @@ mod tests {
             .unwrap();
         a.assert();
         assert_eq!(records.len(), 1);
+    }
+
+    #[test]
+    fn retry_after_parses_seconds_and_caps() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert("retry-after", "5".parse().unwrap());
+        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(5)));
+
+        headers.insert("retry-after", "99".parse().unwrap());
+        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(30)));
+
+        headers.insert("retry-after", "nope".parse().unwrap());
+        assert_eq!(retry_after_delay(&headers), None);
     }
 
     #[test]
