@@ -40,7 +40,7 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 
 ## Toolchain
 
-- Edition **2024**, MSRV **1.88** (`time` ≥ 0.3.47 / RUSTSEC-2026-0009). CI and `rust-toolchain.toml` use stable.
+- Edition **2024**, MSRV **1.88** (`time` ≥ 0.3.47 / RUSTSEC-2026-0009). CI uses stable plus a `msrv` job on 1.88.0. `rust-toolchain.toml` tracks stable.
 - Format: `cargo fmt --all`. Clippy: `cargo clippy --all-targets --locked -- -D warnings`.
 
 ## Invariants
@@ -52,7 +52,7 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 - **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS).
 - **No secrets in logs, tests, or docs**. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_API_KEY` are env-only; `.env` is gitignored.
 - **Clippy `unwrap_used` / `expect_used` / `unreachable` are deny** in library code. Allow them only in `#[cfg(test)]` modules.
-- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times (honor `Retry-After`, cap 30s).
+- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times: actually `thread::sleep` for `Retry-After` (seconds; cap 30s) or a short backoff. Drop the error response before sleeping so the `ureq` pool can reuse the connection.
 - **Default IP mode is IPv4**. Dual-stack is opt-in (`CHANGE_FLARE_IP_MODE=both`) because many origins are v4-only.
 - **STUN results must be globally routable**. Drop loopback, RFC1918, CGNAT (`100.64/10`), link-local, unique-local, and documentation ranges so they are never PATCHed into DNS.
 
@@ -74,7 +74,7 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 
 - Config from environment (and optional `.env` for local runs).
 - Container image is non-root distroless. Example k8s pod uses `hostNetwork` so STUN sees the node public IP.
-- Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`.
-- systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes.
+- Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`. Probe IO on the health socket times out after 2s. Example pod sets `enableServiceLinks: false`.
+- systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes (`PrivateDevices`, `ProtectHostname`, `ProtectClock` plus the existing sandbox).
 - Compose example: `docker compose -f deploy/compose.yaml up --build` (host network + `.env`).
 - SIGINT/SIGTERM stop the poll loop after the current sleep slice (250ms).

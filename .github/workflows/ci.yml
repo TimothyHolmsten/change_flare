@@ -34,6 +34,17 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.88
+      - name: Test on MSRV 1.88
+        run: cargo +1.88.0 test --all-targets --locked
+
   scripts:
     runs-on: ubuntu-latest
     steps:

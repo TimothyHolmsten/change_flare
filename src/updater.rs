@@ -81,7 +81,7 @@ impl Updater {
         log::info!("public IPs v4={:?} v6={:?}", ips.v4, ips.v6);
         let records = self
             .client
-            .list_address_records(&self.config.record_names, &self.config.dns_types())?;
+            .list_address_records(&self.config.record_names, self.config.dns_types())?;
         if records.is_empty() && !self.config.record_names.is_empty() {
             log::warn!(
                 "no matching A/AAAA records for {:?}",
@@ -475,5 +475,21 @@ mod tests {
         let report = apply_updates(&client, &records, &ips).unwrap();
         assert_eq!(report.updated, 0);
         assert_eq!(report.skipped, 1);
+    }
+
+    #[test]
+    fn interruptible_sleep_returns_immediately_when_stopped() {
+        let running = AtomicBool::new(false);
+        let start = std::time::Instant::now();
+        assert!(!interruptible_sleep(Duration::from_secs(30), &running));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn reconcile_rejects_empty_public_ips() {
+        let mut updater =
+            Updater::new(test_config("http://127.0.0.1:1".into()), HealthState::new());
+        let err = updater.reconcile(PublicIps::default()).unwrap_err();
+        assert!(err.to_string().contains("no public IP"));
     }
 }

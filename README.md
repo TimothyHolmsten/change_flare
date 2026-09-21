@@ -8,7 +8,7 @@ Each poll:
 
 1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, documentation) are discarded.
 2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). FQDNs in `CLOUDFLARE_RECORD_NAMES` are filtered server-side with `name` (trailing dots stripped); host labels are matched locally.
-3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`5xx` responses are retried.
+3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`502`/`503`/`504` responses retry up to three times, sleeping for `Retry-After` (capped at 30s).
 
 ## Setup
 
@@ -69,7 +69,7 @@ sudo systemctl enable --now change-flare
 
 ### Kubernetes
 
-Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (startup + liveness) and `/readyz` (ready after the first successful sync). Keep `replicas: 1` for a given DNS name; multiple writers would race.
+Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, `enableServiceLinks: false` to keep the env free of Kubernetes service URLs, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (startup + liveness) and `/readyz` (ready after the first successful sync). `/readyz` includes `X-Last-Success-Epoch`. Keep `replicas: 1` for a given DNS name; multiple writers would race.
 
 ## Develop
 
