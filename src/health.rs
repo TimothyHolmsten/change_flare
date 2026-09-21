@@ -3,7 +3,9 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const PROBE_IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 use crate::error::Error;
 
@@ -70,6 +72,8 @@ fn serve(listener: TcpListener, state: HealthState) {
         let Ok(mut stream) = incoming else {
             continue;
         };
+        let _ = stream.set_read_timeout(Some(PROBE_IO_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(PROBE_IO_TIMEOUT));
         let mut buf = [0u8; 256];
         let _ = stream.read(&mut buf);
         let request = String::from_utf8_lossy(&buf);
@@ -130,28 +134,37 @@ mod tests {
         let serving = state.clone();
         thread::spawn(move || serve(listener, serving));
 
-        let (status, body) = http_get(addr, "/healthz");
+        let (status, body, epoch) = http_get(addr, "/healthz");
         assert_eq!(status, 200);
         assert_eq!(body, "ok");
+        assert_eq!(epoch, 0);
 
-        let (status, body) = http_get(addr, "/readyz");
+        let (status, body, epoch) = http_get(addr, "/readyz");
         assert_eq!(status, 503);
         assert_eq!(body, "not ready");
+        assert_eq!(epoch, 0);
 
         state.mark_success();
-        let (status, body) = http_get(addr, "/readyz");
+        let (status, body, epoch) = http_get(addr, "/readyz");
         assert_eq!(status, 200);
         assert_eq!(body, "ready");
+        assert!(epoch > 0);
 
-        let (status, _) = http_get(addr, "/livez");
+        let (status, _, _) = http_get(addr, "/livez");
         assert_eq!(status, 200);
 
-        let (status, _) = http_get(addr, "/nope");
+        let (status, _, _) = http_get(addr, "/nope");
         assert_eq!(status, 404);
     }
 
-    fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
+    fn http_get(addr: SocketAddr, path: &str) -> (u16, String, u64) {
         let mut stream = TcpStream::connect(addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         stream
             .write_all(
                 format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -165,12 +178,17 @@ mod tests {
             .nth(1)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        let epoch = buf
+            .lines()
+            .find_map(|line| line.strip_prefix("X-Last-Success-Epoch: "))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
         let body = buf
             .split("\r\n\r\n")
             .nth(1)
             .unwrap_or_default()
             .trim()
             .to_string();
-        (status, body)
+        (status, body, epoch)
     }
 }

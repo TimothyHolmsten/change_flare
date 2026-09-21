@@ -24,6 +24,9 @@ RestrictRealtime=true
 RestrictNamespaces=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
 
 [Install]
 WantedBy=multi-user.target

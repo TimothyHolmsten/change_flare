@@ -1,4 +1,5 @@
-# Language-default workflow. Format, Clippy, audit, and image builds live in ci.yml.
+# Language-default workflow (build + test). Format, Clippy, MSRV, audit, and
+# image builds live in ci.yml and are the quality gate for pull requests.
 name: Rust
 
 on:

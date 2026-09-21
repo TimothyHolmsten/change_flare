@@ -75,11 +75,13 @@ impl CloudflareClient {
             .build()
             .into();
 
+        let api_base = api_base.into().trim_end_matches('/').to_string();
+        let zone_id = zone_id.into();
         Self {
             agent,
-            api_base: api_base.into().trim_end_matches('/').to_string(),
+            api_base,
             authorization: format!("Bearer {}", token.into()),
-            zone_id: zone_id.into(),
+            zone_id,
         }
     }
 
@@ -209,6 +211,9 @@ impl CloudflareClient {
                 log::warn!(
                     "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
                 );
+                // Drop the body so the pooled connection can be reused during the wait.
+                drop(response);
+                thread::sleep(wait);
                 continue;
             }
 
@@ -572,5 +577,78 @@ mod tests {
         let client = CloudflareClient::new(server.url(), "token", "zone1");
         let err = client.list_type("A", None).unwrap_err();
         assert!(err.to_string().contains("Authentication error"));
+    }
+
+    #[test]
+    fn mixed_label_and_fqdn_lists_once_without_name_query() {
+        let mut server = mockito::Server::new();
+        let a = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([
+                {
+                    "id": "rec-a",
+                    "name": "lb.example.com",
+                    "type": "A",
+                    "content": "203.0.113.10"
+                },
+                {
+                    "id": "rec-b",
+                    "name": "origin.example.com",
+                    "type": "A",
+                    "content": "203.0.113.20"
+                }
+            ])))
+            .expect(1)
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client
+            .list_address_records(
+                &["lb".to_string(), "origin.example.com".to_string()],
+                &["A"],
+            )
+            .unwrap();
+        a.assert();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn retries_bad_gateway_then_succeeds() {
+        let mut server = mockito::Server::new();
+        let failed = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(502)
+            .with_body("bad gateway")
+            .expect(1)
+            .create();
+        let ok = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        failed.assert();
+        ok.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn retry_after_parses_seconds_and_caps() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("5"));
+        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(5)));
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("99"));
+        assert_eq!(retry_after_delay(&headers), Some(MAX_RETRY_WAIT));
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("nope"));
+        assert_eq!(retry_after_delay(&headers), None);
+        assert_eq!(retry_after_delay(&ureq::http::HeaderMap::new()), None);
     }
 }
