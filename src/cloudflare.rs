@@ -210,7 +210,7 @@ impl CloudflareClient {
                     "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
                 );
                 drop(response);
-                thread::sleep(wait);
+                thread::sleep(wait.max(backoff(attempt)));
                 continue;
             }
 
