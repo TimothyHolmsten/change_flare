@@ -81,7 +81,7 @@ impl Updater {
         log::info!("public IPs v4={:?} v6={:?}", ips.v4, ips.v6);
         let records = self
             .client
-            .list_address_records(&self.config.record_names, &self.config.dns_types())?;
+            .list_address_records(&self.config.record_names, self.config.dns_types())?;
         if records.is_empty() && !self.config.record_names.is_empty() {
             log::warn!(
                 "no matching A/AAAA records for {:?}",
@@ -457,6 +457,12 @@ mod tests {
         first.assert();
         second.assert();
         assert!(err.to_string().contains("record locked"));
+    }
+
+    #[test]
+    fn interruptible_sleep_returns_immediately_when_stopped() {
+        let running = AtomicBool::new(false);
+        assert!(!interruptible_sleep(Duration::from_secs(60), &running));
     }
 
     #[test]

@@ -25,6 +25,7 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       automountServiceAccountToken: false
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 15
       securityContext:
         runAsNonRoot: true

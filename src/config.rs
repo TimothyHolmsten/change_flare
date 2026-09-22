@@ -94,12 +94,12 @@ impl Config {
     }
 
     /// DNS record types this node should reconcile (`A` and/or `AAAA`).
-    pub fn dns_types(&self) -> Vec<&'static str> {
+    pub fn dns_types(&self) -> &'static [&'static str] {
         match (self.ipv4, self.ipv6) {
-            (true, true) => vec!["A", "AAAA"],
-            (true, false) => vec!["A"],
-            (false, true) => vec!["AAAA"],
-            (false, false) => Vec::new(),
+            (true, true) => &["A", "AAAA"],
+            (true, false) => &["A"],
+            (false, true) => &["AAAA"],
+            (false, false) => &[],
         }
     }
 }
@@ -184,11 +184,11 @@ mod tests {
             always_reconcile: false,
             health_bind: None,
         };
-        assert_eq!(cfg.dns_types(), vec!["A"]);
+        assert_eq!(cfg.dns_types(), ["A"].as_slice());
         cfg.ipv6 = true;
-        assert_eq!(cfg.dns_types(), vec!["A", "AAAA"]);
+        assert_eq!(cfg.dns_types(), ["A", "AAAA"].as_slice());
         cfg.ipv4 = false;
-        assert_eq!(cfg.dns_types(), vec!["AAAA"]);
+        assert_eq!(cfg.dns_types(), ["AAAA"].as_slice());
     }
 
     #[test]

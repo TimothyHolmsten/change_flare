@@ -52,7 +52,7 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 - **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS).
 - **No secrets in logs, tests, or docs**. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_API_KEY` are env-only; `.env` is gitignored.
 - **Clippy `unwrap_used` / `expect_used` / `unreachable` are deny** in library code. Allow them only in `#[cfg(test)]` modules.
-- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times (honor `Retry-After`, cap 30s).
+- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times: sleep `Retry-After` (seconds, cap 30s) or a short backoff, then retry. Do not retry without sleeping.
 - **Default IP mode is IPv4**. Dual-stack is opt-in (`CHANGE_FLARE_IP_MODE=both`) because many origins are v4-only.
 - **STUN results must be globally routable**. Drop loopback, RFC1918, CGNAT (`100.64/10`), link-local, unique-local, and documentation ranges so they are never PATCHed into DNS.
 
