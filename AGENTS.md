@@ -74,6 +74,7 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 
 - Config from environment (and optional `.env` for local runs).
 - Container image is non-root distroless. Example k8s pod uses `hostNetwork` so STUN sees the node public IP.
+- CI publishes `ghcr.io/timothyholmsten/change_flare` on pushes to `main` and on `vX.Y.Z` tags (`latest`, `sha-<commit>`, and semver). Pull requests and the weekly schedule build the image and do not push it.
 - Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`.
 - systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes.
 - Compose example: `docker compose -f deploy/compose.yaml up --build` (host network + `.env`).

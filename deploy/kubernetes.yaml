@@ -1,5 +1,7 @@
 # Example Deployment for a single origin / reverse-proxy node.
 # STUN must see that node's public IP, so this pod uses host networking.
+# The image is published by CI to ghcr.io/timothyholmsten/change_flare.
+# Set that GHCR package to public once, or add an imagePullSecret.
 # Create the secret first, then apply the Deployment.
 #
 #   kubectl create secret generic change-flare \
@@ -35,8 +37,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: change-flare
-          image: change_flare:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/timothyholmsten/change_flare:latest
+          imagePullPolicy: Always
           env:
             - name: CLOUDFLARE_API_TOKEN
               valueFrom:

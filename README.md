@@ -43,6 +43,23 @@ The process is a single blocking loop; send `SIGINT`/`SIGTERM` to drain and exit
 
 ### Docker
 
+CI publishes `ghcr.io/timothyholmsten/change_flare` on every push to `main` and on `v*` tags:
+
+| Tag | When |
+| --- | --- |
+| `latest` | `main`, and stable version tags such as `v0.2.2` |
+| `sha-<commit>` | every publish |
+| `0.2.2`, `0.2` | git tag `v0.2.2` |
+
+The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the visibility you chose.
+
+```bash
+docker pull ghcr.io/timothyholmsten/change_flare:latest
+docker run --rm --network host --env-file .env ghcr.io/timothyholmsten/change_flare:latest
+```
+
+A local build uses the same Dockerfile:
+
 ```bash
 docker build -t change_flare .
 docker run --rm --network host --env-file .env change_flare

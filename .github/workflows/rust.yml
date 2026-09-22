@@ -36,3 +36,5 @@ jobs:
     - uses: actions/checkout@v7
     - name: Test open-pr-if-needed
       run: bash scripts/test-open-pr-if-needed.sh
+    - name: Test GHCR publish gate
+      run: bash scripts/test-ghcr-publish-enabled.sh

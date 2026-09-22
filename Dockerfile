@@ -12,5 +12,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /change_flare /change_flare
+LABEL org.opencontainers.image.source="https://github.com/TimothyHolmsten/change_flare" \
+      org.opencontainers.image.description="Keep Cloudflare A/AAAA records in sync with this node's public IP" \
+      org.opencontainers.image.licenses="MIT"
 USER nonroot
 ENTRYPOINT ["/change_flare"]

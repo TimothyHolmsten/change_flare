@@ -1,4 +1,6 @@
 # Origin DDNS agent. STUN must see the host public IP, so this uses host networking.
+# This file builds the local Dockerfile. CI also publishes
+# ghcr.io/timothyholmsten/change_flare:latest.
 #
 #   docker compose -f deploy/compose.yaml up --build
 #
