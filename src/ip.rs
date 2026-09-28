@@ -168,5 +168,17 @@ mod tests {
         assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111
         ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfd12, 0x3456, 0x789a, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfec0, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(
+            Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped()
+        )));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::BROADCAST)));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1))));
     }
 }
