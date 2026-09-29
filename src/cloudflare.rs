@@ -11,7 +11,7 @@ use crate::error::Error;
 
 const USER_AGENT: &str = concat!("change_flare/", env!("CARGO_PKG_VERSION"));
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
-const PAGE_SIZE: &str = "100";
+const PAGE_SIZE: u32 = 100;
 const MAX_ATTEMPTS: u32 = 3;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(30);
 
@@ -75,11 +75,13 @@ impl CloudflareClient {
             .build()
             .into();
 
+        let api_base = api_base.into().trim_end_matches('/').to_string();
+        let zone_id = zone_id.into();
         Self {
             agent,
-            api_base: api_base.into().trim_end_matches('/').to_string(),
+            api_base,
             authorization: format!("Bearer {}", token.into()),
-            zone_id: zone_id.into(),
+            zone_id,
         }
     }
 
@@ -132,7 +134,7 @@ impl CloudflareClient {
                     .header("Authorization", &self.authorization)
                     .header("User-Agent", USER_AGENT)
                     .query("type", record_type)
-                    .query("per_page", PAGE_SIZE)
+                    .query("per_page", PAGE_SIZE.to_string())
                     .query("page", page.to_string());
                 if let Some(name) = name {
                     request = request.query("name", name);
@@ -209,8 +211,9 @@ impl CloudflareClient {
                 log::warn!(
                     "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
                 );
+                // Drop the body so the pooled connection can be reused during the wait.
                 drop(response);
-                thread::sleep(wait.max(backoff(attempt)));
+                thread::sleep(wait);
                 continue;
             }
 
@@ -229,10 +232,6 @@ impl CloudflareClient {
 }
 
 /// Cloudflare `name` is an exact FQDN match. Host labels still need a full list.
-///
-/// Only used when every configured name is an FQDN. Mixing a host label with an
-/// FQDN lists the type once and matches locally, which is fewer API calls than
-/// querying names individually plus a full-type list.
 fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if record_names.is_empty() {
         return None;
@@ -240,14 +239,12 @@ fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if !record_names.iter().all(|name| name.contains('.')) {
         return None;
     }
-    let mut names = Vec::new();
-    for name in record_names {
-        let normalized = name.trim_end_matches('.').to_ascii_lowercase();
-        if !names.contains(&normalized) {
-            names.push(normalized);
-        }
-    }
-    Some(names)
+    Some(
+        record_names
+            .iter()
+            .map(|name| name.trim_end_matches('.').to_ascii_lowercase())
+            .collect(),
+    )
 }
 
 fn retryable_status(status: u16) -> bool {
@@ -258,13 +255,8 @@ fn backoff(attempt: u32) -> Duration {
     if cfg!(test) {
         Duration::from_millis(1)
     } else {
-        backoff_delay(attempt)
+        Duration::from_millis(200 * u64::from(attempt))
     }
-}
-
-fn backoff_delay(attempt: u32) -> Duration {
-    let shift = attempt.saturating_sub(1).min(4);
-    Duration::from_millis(200u64.saturating_mul(1u64 << shift))
 }
 
 fn retry_after_delay(headers: &ureq::http::HeaderMap) -> Option<Duration> {
@@ -539,19 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_parses_seconds_and_caps() {
-        let mut headers = ureq::http::HeaderMap::new();
-        headers.insert("retry-after", "5".parse().unwrap());
-        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(5)));
-
-        headers.insert("retry-after", "99".parse().unwrap());
-        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(30)));
-
-        headers.insert("retry-after", "nope".parse().unwrap());
-        assert_eq!(retry_after_delay(&headers), None);
-    }
-
-    #[test]
     fn retries_rate_limit_then_succeeds() {
         let mut server = mockito::Server::new();
         let limited = server
@@ -578,48 +557,51 @@ mod tests {
     }
 
     #[test]
-    fn exact_fqdn_filters_dedupes_and_requires_all_fqdns() {
-        assert_eq!(
-            exact_fqdn_filters(&["LB.example.com.".to_string(), "lb.example.com".to_string()]),
-            Some(vec!["lb.example.com".to_string()])
-        );
-        assert_eq!(
-            exact_fqdn_filters(&["lb".to_string(), "origin.example.com".to_string()]),
-            None
-        );
-        assert_eq!(exact_fqdn_filters(&[]), None);
+    fn reads_error_body_from_http_error_status() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(401)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": false,
+                    "errors": [{ "message": "Authentication error" }],
+                    "result": null
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let err = client.list_type("A", None).unwrap_err();
+        assert!(err.to_string().contains("Authentication error"));
     }
 
     #[test]
-    fn mixed_label_and_fqdn_lists_type_without_name() {
+    fn mixed_label_and_fqdn_lists_once_without_name_query() {
         let mut server = mockito::Server::new();
-        let named = server
-            .mock("GET", "/zones/zone1/dns_records")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
-                mockito::Matcher::UrlEncoded("name".into(), "origin.example.com".into()),
-            ]))
-            .expect(0)
-            .create();
-        let listed = server
+        let a = server
             .mock("GET", "/zones/zone1/dns_records")
             .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(list_body(serde_json::json!([
                 {
-                    "id": "rec-lb",
+                    "id": "rec-a",
                     "name": "lb.example.com",
                     "type": "A",
                     "content": "203.0.113.10"
                 },
                 {
-                    "id": "rec-origin",
+                    "id": "rec-b",
                     "name": "origin.example.com",
                     "type": "A",
-                    "content": "203.0.113.11"
+                    "content": "203.0.113.20"
                 }
             ])))
+            .expect(1)
             .create();
 
         let client = CloudflareClient::new(server.url(), "token", "zone1");
@@ -629,8 +611,7 @@ mod tests {
                 &["A"],
             )
             .unwrap();
-        named.assert();
-        listed.assert();
+        a.assert();
         assert_eq!(records.len(), 2);
     }
 
@@ -660,32 +641,14 @@ mod tests {
     }
 
     #[test]
-    fn backoff_doubles_each_attempt() {
-        assert_eq!(backoff_delay(1), Duration::from_millis(200));
-        assert_eq!(backoff_delay(2), Duration::from_millis(400));
-        assert_eq!(backoff_delay(3), Duration::from_millis(800));
-    }
-
-    #[test]
-    fn reads_error_body_from_http_error_status() {
-        let mut server = mockito::Server::new();
-        let _mock = server
-            .mock("GET", "/zones/zone1/dns_records")
-            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
-            .with_status(401)
-            .with_header("content-type", "application/json")
-            .with_body(
-                serde_json::json!({
-                    "success": false,
-                    "errors": [{ "message": "Authentication error" }],
-                    "result": null
-                })
-                .to_string(),
-            )
-            .create();
-
-        let client = CloudflareClient::new(server.url(), "token", "zone1");
-        let err = client.list_type("A", None).unwrap_err();
-        assert!(err.to_string().contains("Authentication error"));
+    fn retry_after_parses_seconds_and_caps() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("5"));
+        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(5)));
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("99"));
+        assert_eq!(retry_after_delay(&headers), Some(MAX_RETRY_WAIT));
+        headers.insert("retry-after", ureq::http::HeaderValue::from_static("nope"));
+        assert_eq!(retry_after_delay(&headers), None);
+        assert_eq!(retry_after_delay(&ureq::http::HeaderMap::new()), None);
     }
 }

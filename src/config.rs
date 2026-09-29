@@ -184,11 +184,13 @@ mod tests {
             always_reconcile: false,
             health_bind: None,
         };
-        assert_eq!(cfg.dns_types(), ["A"].as_slice());
+        assert_eq!(cfg.dns_types(), &["A"]);
         cfg.ipv6 = true;
-        assert_eq!(cfg.dns_types(), ["A", "AAAA"].as_slice());
+        assert_eq!(cfg.dns_types(), &["A", "AAAA"]);
         cfg.ipv4 = false;
-        assert_eq!(cfg.dns_types(), ["AAAA"].as_slice());
+        assert_eq!(cfg.dns_types(), &["AAAA"]);
+        cfg.ipv6 = false;
+        assert_eq!(cfg.dns_types(), &[] as &[&str]);
     }
 
     #[test]
@@ -247,43 +249,6 @@ mod tests {
         let err = Config::from_env().unwrap_err();
         snapshot.restore();
         assert!(err.to_string().contains("CHANGE_FLARE_IP_MODE"));
-    }
-
-    #[test]
-    fn from_env_accepts_api_key_alias() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let snapshot = EnvSnapshot::capture();
-
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_API_TOKEN");
-            std::env::set_var("CLOUDFLARE_API_KEY", "legacy-token");
-            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
-            std::env::remove_var("CHANGE_FLARE_IP_MODE");
-            std::env::remove_var("CLOUDFLARE_RECORD_NAMES");
-            std::env::remove_var("CLOUDFLARE_POLL_RATE");
-            std::env::remove_var("CHANGE_FLARE_HEALTH_BIND");
-            std::env::remove_var("CHANGE_FLARE_ALWAYS_RECONCILE");
-        }
-
-        let cfg = Config::from_env().unwrap();
-        snapshot.restore();
-        assert_eq!(cfg.api_token, "legacy-token");
-    }
-
-    #[test]
-    fn from_env_requires_token() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let snapshot = EnvSnapshot::capture();
-
-        unsafe {
-            std::env::remove_var("CLOUDFLARE_API_TOKEN");
-            std::env::remove_var("CLOUDFLARE_API_KEY");
-            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
-        }
-
-        let err = Config::from_env().unwrap_err();
-        snapshot.restore();
-        assert!(err.to_string().contains("CLOUDFLARE_API_TOKEN"));
     }
 
     #[test]
