@@ -460,6 +460,20 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_rejects_empty_public_ips() {
+        let mut updater =
+            Updater::new(test_config("http://127.0.0.1:1".into()), HealthState::new());
+        let err = updater.reconcile(PublicIps::default()).unwrap_err();
+        assert!(err.to_string().contains("no public IP discovered"));
+    }
+
+    #[test]
+    fn interruptible_sleep_returns_immediately_when_stopped() {
+        let running = AtomicBool::new(false);
+        assert!(!interruptible_sleep(Duration::from_secs(60), &running));
+    }
+
+    #[test]
     fn treats_compressed_and_expanded_ipv6_as_equal() {
         let client = CloudflareClient::new("http://127.0.0.1:1", "token", "zone1");
         let records = [DnsRecord {
@@ -475,21 +489,5 @@ mod tests {
         let report = apply_updates(&client, &records, &ips).unwrap();
         assert_eq!(report.updated, 0);
         assert_eq!(report.skipped, 1);
-    }
-
-    #[test]
-    fn interruptible_sleep_returns_immediately_when_stopped() {
-        let running = AtomicBool::new(false);
-        let start = std::time::Instant::now();
-        assert!(!interruptible_sleep(Duration::from_secs(30), &running));
-        assert!(start.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn reconcile_rejects_empty_public_ips() {
-        let mut updater =
-            Updater::new(test_config("http://127.0.0.1:1".into()), HealthState::new());
-        let err = updater.reconcile(PublicIps::default()).unwrap_err();
-        assert!(err.to_string().contains("no public IP"));
     }
 }

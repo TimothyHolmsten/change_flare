@@ -1,5 +1,4 @@
-# Language-default workflow (build + test). Format, Clippy, MSRV, audit, and
-# image builds live in ci.yml and are the quality gate for pull requests.
+# Language-default workflow. Format, Clippy, MSRV, audit, and image builds live in ci.yml.
 name: Rust
 
 on:
@@ -37,3 +36,5 @@ jobs:
     - uses: actions/checkout@v7
     - name: Test open-pr-if-needed
       run: bash scripts/test-open-pr-if-needed.sh
+    - name: Test GHCR publish gate
+      run: bash scripts/test-ghcr-publish-enabled.sh

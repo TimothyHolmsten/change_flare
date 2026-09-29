@@ -40,19 +40,19 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 
 ## Toolchain
 
-- Edition **2024**, MSRV **1.88** (`time` ≥ 0.3.47 / RUSTSEC-2026-0009). CI uses stable plus a `msrv` job on 1.88.0. `rust-toolchain.toml` tracks stable.
+- Edition **2024**, MSRV **1.88** (`time` ≥ 0.3.47 / RUSTSEC-2026-0009). `rust-toolchain.toml` uses stable; CI also runs `cargo +1.88.0 test`.
 - Format: `cargo fmt --all`. Clippy: `cargo clippy --all-targets --locked -- -D warnings`.
 
 ## Invariants
 
 - **One HTTP stack**: `ureq` 3 with a long-lived `Agent` (connection pool). `http_status_as_error` is off so 4xx/5xx JSON error bodies can be read. Do not add `reqwest` unless async becomes a hard requirement.
 - **PATCH, not PUT**: [Update DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/) (`PATCH /zones/{zone_id}/dns_records/{id}`) with `{ "content": "<ip>" }` so TTL/proxied/tags stay intact.
-- **Filter server-side** with `type=A` / `type=AAAA` and paginate (`per_page=100`). Request only families enabled by `CHANGE_FLARE_IP_MODE`. When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, also pass `name=<fqdn>` (exact; trailing dots stripped). The current OpenAPI also documents nested `name.exact`; the string `name=` filter remains the compatible exact match used by cloudflare-go v4. Never rewrite CNAME/MX/TXT.
+- **Filter server-side** with `type=A` / `type=AAAA` and paginate (`per_page=100`). Request only families enabled by `CHANGE_FLARE_IP_MODE`. When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, also pass `name=<fqdn>` (exact; trailing dots stripped; duplicates dropped). Mixing a host label with an FQDN lists the type once and matches locally. The current OpenAPI also documents nested `name.exact`; the string `name=` filter remains the compatible exact match used by cloudflare-go v4. Never rewrite CNAME/MX/TXT.
 - **Prefer `CLOUDFLARE_RECORD_NAMES`**. Updating every address record in a zone is supported for tiny/dedicated zones only; log a warning when the filter is empty.
 - **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS).
 - **No secrets in logs, tests, or docs**. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_API_KEY` are env-only; `.env` is gitignored.
 - **Clippy `unwrap_used` / `expect_used` / `unreachable` are deny** in library code. Allow them only in `#[cfg(test)]` modules.
-- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times: actually `thread::sleep` for `Retry-After` (seconds; cap 30s) or a short backoff. Drop the error response before sleeping so the `ureq` pool can reuse the connection.
+- **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times: sleep `Retry-After` (seconds, cap 30s) or exponential backoff (`200ms * 2^(attempt-1)`), then retry. Do not retry without sleeping. REST responses also include IETF `Ratelimit` remaining-quota headers; this agent does not need remaining-quota pacing because the poll floor is 60s.
 - **Default IP mode is IPv4**. Dual-stack is opt-in (`CHANGE_FLARE_IP_MODE=both`) because many origins are v4-only.
 - **STUN results must be globally routable**. Drop loopback, RFC1918, CGNAT (`100.64/10`), link-local, unique-local, and documentation ranges so they are never PATCHed into DNS.
 
@@ -74,7 +74,8 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 
 - Config from environment (and optional `.env` for local runs).
 - Container image is non-root distroless. Example k8s pod uses `hostNetwork` so STUN sees the node public IP.
+- CI publishes `ghcr.io/timothyholmsten/change_flare` on pushes to `main` and on `vX.Y.Z` tags (`latest`, `sha-<commit>`, and semver). Pull requests and the weekly schedule build the image and do not push it.
 - Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`. Probe IO on the health socket times out after 2s. Example pod sets `enableServiceLinks: false`.
-- systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes (`PrivateDevices`, `ProtectHostname`, `ProtectClock` plus the existing sandbox).
+- systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes (`ProtectKernelLogs`, `ProtectProc=invisible`, empty `CapabilityBoundingSet`).
 - Compose example: `docker compose -f deploy/compose.yaml up --build` (host network + `.env`).
 - SIGINT/SIGTERM stop the poll loop after the current sleep slice (250ms).

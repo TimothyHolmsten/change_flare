@@ -6,9 +6,9 @@ This is an origin process, not a Cloudflare Worker. DNS writes go through the [C
 
 Each poll:
 
-1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, documentation) are discarded.
-2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). FQDNs in `CLOUDFLARE_RECORD_NAMES` are filtered server-side with `name` (trailing dots stripped); host labels are matched locally.
-3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`502`/`503`/`504` responses retry up to three times, sleeping for `Retry-After` (capped at 30s).
+1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, documentation, ULA, site-local, IPv4-mapped) are discarded.
+2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, records are filtered server-side with `name` (trailing dots stripped, duplicates dropped). Host labels, or a mix of labels and FQDNs, list the type once and match locally.
+3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`502`/`503`/`504` responses are retried (honors `Retry-After` in seconds, capped at 30s, with exponential backoff).
 
 ## Setup
 
@@ -42,6 +42,23 @@ Do not commit `.env`. Tokens are never logged.
 The process is a single blocking loop; send `SIGINT`/`SIGTERM` to drain and exit.
 
 ### Docker
+
+CI publishes `ghcr.io/timothyholmsten/change_flare` on every push to `main` and on `v*` tags:
+
+| Tag | When |
+| --- | --- |
+| `latest` | `main`, and stable version tags |
+| `sha-<commit>` | every publish |
+| `0.2.4`, `0.2` | git tag `v0.2.4` |
+
+The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the package visibility you chose.
+
+```bash
+docker pull ghcr.io/timothyholmsten/change_flare:latest
+docker run --rm --network host --env-file .env ghcr.io/timothyholmsten/change_flare:latest
+```
+
+A local build uses the same Dockerfile:
 
 ```bash
 docker build -t change_flare .
