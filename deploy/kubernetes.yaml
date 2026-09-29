@@ -93,6 +93,7 @@ spec:
               memory: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
+            privileged: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]

@@ -134,27 +134,38 @@ mod tests {
         let serving = state.clone();
         thread::spawn(move || serve(listener, serving));
 
-        let (status, body) = http_get(addr, "/healthz");
+        let (status, body, raw) = http_get(addr, "/healthz");
         assert_eq!(status, 200);
         assert_eq!(body, "ok");
+        assert!(raw.to_ascii_lowercase().contains("x-last-success-epoch: 0"));
 
-        let (status, body) = http_get(addr, "/readyz");
+        let (status, body, _) = http_get(addr, "/readyz");
         assert_eq!(status, 503);
         assert_eq!(body, "not ready");
 
         state.mark_success();
-        let (status, body) = http_get(addr, "/readyz");
+        let (status, body, raw) = http_get(addr, "/readyz");
         assert_eq!(status, 200);
         assert_eq!(body, "ready");
+        let epoch = raw
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("x-last-success-epoch:")
+                    .map(|value| value.trim().to_string())
+            })
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        assert!(epoch > 0);
 
-        let (status, _) = http_get(addr, "/livez");
+        let (status, _, _) = http_get(addr, "/livez");
         assert_eq!(status, 200);
 
-        let (status, _) = http_get(addr, "/nope");
+        let (status, _, _) = http_get(addr, "/nope");
         assert_eq!(status, 404);
     }
 
-    fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
+    fn http_get(addr: SocketAddr, path: &str) -> (u16, String, String) {
         let mut stream = TcpStream::connect(addr).unwrap();
         stream
             .write_all(
@@ -175,6 +186,6 @@ mod tests {
             .unwrap_or_default()
             .trim()
             .to_string();
-        (status, body)
+        (status, body, buf)
     }
 }

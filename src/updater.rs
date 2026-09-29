@@ -460,6 +460,14 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_rejects_empty_public_ips() {
+        let mut updater =
+            Updater::new(test_config("http://127.0.0.1:1".into()), HealthState::new());
+        let err = updater.reconcile(PublicIps::default()).unwrap_err();
+        assert!(err.to_string().contains("no public IP discovered"));
+    }
+
+    #[test]
     fn interruptible_sleep_returns_immediately_when_stopped() {
         let running = AtomicBool::new(false);
         assert!(!interruptible_sleep(Duration::from_secs(60), &running));

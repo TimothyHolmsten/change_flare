@@ -1,4 +1,4 @@
-# Language-default workflow. Format, Clippy, audit, and image builds live in ci.yml.
+# Language-default workflow. Format, Clippy, MSRV, audit, and image builds live in ci.yml.
 name: Rust
 
 on:

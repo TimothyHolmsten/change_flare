@@ -229,6 +229,10 @@ impl CloudflareClient {
 }
 
 /// Cloudflare `name` is an exact FQDN match. Host labels still need a full list.
+///
+/// Only used when every configured name is an FQDN. Mixing a host label with an
+/// FQDN lists the type once and matches locally, which is fewer API calls than
+/// querying names individually plus a full-type list.
 fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if record_names.is_empty() {
         return None;
@@ -236,12 +240,14 @@ fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if !record_names.iter().all(|name| name.contains('.')) {
         return None;
     }
-    Some(
-        record_names
-            .iter()
-            .map(|name| name.trim_end_matches('.').to_ascii_lowercase())
-            .collect(),
-    )
+    let mut names = Vec::new();
+    for name in record_names {
+        let normalized = name.trim_end_matches('.').to_ascii_lowercase();
+        if !names.contains(&normalized) {
+            names.push(normalized);
+        }
+    }
+    Some(names)
 }
 
 fn retryable_status(status: u16) -> bool {
@@ -252,8 +258,13 @@ fn backoff(attempt: u32) -> Duration {
     if cfg!(test) {
         Duration::from_millis(1)
     } else {
-        Duration::from_millis(200 * u64::from(attempt))
+        backoff_delay(attempt)
     }
+}
+
+fn backoff_delay(attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(4);
+    Duration::from_millis(200u64.saturating_mul(1u64 << shift))
 }
 
 fn retry_after_delay(headers: &ureq::http::HeaderMap) -> Option<Duration> {
@@ -564,6 +575,95 @@ mod tests {
         limited.assert();
         ok.assert();
         assert!(records.is_empty());
+    }
+
+    #[test]
+    fn exact_fqdn_filters_dedupes_and_requires_all_fqdns() {
+        assert_eq!(
+            exact_fqdn_filters(&["LB.example.com.".to_string(), "lb.example.com".to_string()]),
+            Some(vec!["lb.example.com".to_string()])
+        );
+        assert_eq!(
+            exact_fqdn_filters(&["lb".to_string(), "origin.example.com".to_string()]),
+            None
+        );
+        assert_eq!(exact_fqdn_filters(&[]), None);
+    }
+
+    #[test]
+    fn mixed_label_and_fqdn_lists_type_without_name() {
+        let mut server = mockito::Server::new();
+        let named = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("name".into(), "origin.example.com".into()),
+            ]))
+            .expect(0)
+            .create();
+        let listed = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([
+                {
+                    "id": "rec-lb",
+                    "name": "lb.example.com",
+                    "type": "A",
+                    "content": "203.0.113.10"
+                },
+                {
+                    "id": "rec-origin",
+                    "name": "origin.example.com",
+                    "type": "A",
+                    "content": "203.0.113.11"
+                }
+            ])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client
+            .list_address_records(
+                &["lb".to_string(), "origin.example.com".to_string()],
+                &["A"],
+            )
+            .unwrap();
+        named.assert();
+        listed.assert();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn retries_bad_gateway_then_succeeds() {
+        let mut server = mockito::Server::new();
+        let failed = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(502)
+            .with_body("bad gateway")
+            .expect(1)
+            .create();
+        let ok = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        failed.assert();
+        ok.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn backoff_doubles_each_attempt() {
+        assert_eq!(backoff_delay(1), Duration::from_millis(200));
+        assert_eq!(backoff_delay(2), Duration::from_millis(400));
+        assert_eq!(backoff_delay(3), Duration::from_millis(800));
     }
 
     #[test]
