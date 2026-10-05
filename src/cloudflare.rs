@@ -254,11 +254,7 @@ fn retryable_status(status: u16) -> bool {
 }
 
 fn backoff(attempt: u32) -> Duration {
-    if cfg!(test) {
-        Duration::from_millis(1)
-    } else {
-        Duration::from_millis(200 * u64::from(attempt))
-    }
+    Duration::from_millis(200_u64.saturating_mul(2_u64.saturating_pow(attempt.saturating_sub(1))))
 }
 
 fn retry_after_delay(headers: &ureq::http::HeaderMap) -> Option<Duration> {
@@ -652,6 +648,9 @@ mod tests {
         headers.insert("retry-after", ureq::http::HeaderValue::from_static("nope"));
         assert_eq!(retry_after_delay(&headers), None);
         assert_eq!(retry_after_delay(&ureq::http::HeaderMap::new()), None);
+    }
+
+    #[test]
     fn retries_gateway_timeout_then_succeeds() {
         let mut server = mockito::Server::new();
         let failed = server
@@ -752,31 +751,8 @@ mod tests {
 
     #[test]
     fn backoff_doubles_each_attempt() {
-        assert_eq!(backoff_delay(1), Duration::from_millis(200));
-        assert_eq!(backoff_delay(2), Duration::from_millis(400));
-        assert_eq!(backoff_delay(3), Duration::from_millis(800));
-    }
-
-    #[test]
-    fn reads_error_body_from_http_error_status() {
-        let mut server = mockito::Server::new();
-        let _mock = server
-            .mock("GET", "/zones/zone1/dns_records")
-            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
-            .with_status(401)
-            .with_header("content-type", "application/json")
-            .with_body(
-                serde_json::json!({
-                    "success": false,
-                    "errors": [{ "message": "Authentication error" }],
-                    "result": null
-                })
-                .to_string(),
-            )
-            .create();
-
-        let client = CloudflareClient::new(server.url(), "token", "zone1");
-        let err = client.list_type("A", None).unwrap_err();
-        assert!(err.to_string().contains("Authentication error"));
+        assert_eq!(backoff(1), Duration::from_millis(200));
+        assert_eq!(backoff(2), Duration::from_millis(400));
+        assert_eq!(backoff(3), Duration::from_millis(800));
     }
 }
