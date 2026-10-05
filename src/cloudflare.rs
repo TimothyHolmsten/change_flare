@@ -211,8 +211,8 @@ impl CloudflareClient {
                 log::warn!(
                     "Cloudflare HTTP {status} (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {wait:?}"
                 );
-                // Drop the body so the pooled connection can be reused during the wait.
-                drop(response);
+                // Drain the body so the pooled connection can be reused during the wait.
+                let _ = response.body_mut().read_to_vec();
                 thread::sleep(wait);
                 continue;
             }
