@@ -239,12 +239,14 @@ fn exact_fqdn_filters(record_names: &[String]) -> Option<Vec<String>> {
     if !record_names.iter().all(|name| name.contains('.')) {
         return None;
     }
-    Some(
-        record_names
-            .iter()
-            .map(|name| name.trim_end_matches('.').to_ascii_lowercase())
-            .collect(),
-    )
+    let mut names = Vec::new();
+    for name in record_names {
+        let normalized = name.trim_end_matches('.').to_ascii_lowercase();
+        if !names.contains(&normalized) {
+            names.push(normalized);
+        }
+    }
+    Some(names)
 }
 
 fn retryable_status(status: u16) -> bool {
