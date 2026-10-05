@@ -650,5 +650,131 @@ mod tests {
         headers.insert("retry-after", ureq::http::HeaderValue::from_static("nope"));
         assert_eq!(retry_after_delay(&headers), None);
         assert_eq!(retry_after_delay(&ureq::http::HeaderMap::new()), None);
+    fn retries_gateway_timeout_then_succeeds() {
+        let mut server = mockito::Server::new();
+        let failed = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(504)
+            .with_body("gateway timeout")
+            .expect(1)
+            .create();
+        let ok = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        failed.assert();
+        ok.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn retries_service_unavailable_then_succeeds() {
+        let mut server = mockito::Server::new();
+        let failed = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(503)
+            .with_body("unavailable")
+            .expect(1)
+            .create();
+        let ok = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client.list_address_records(&[], &["A"]).unwrap();
+        failed.assert();
+        ok.assert();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn lists_each_fqdn_exactly_once() {
+        let mut server = mockito::Server::new();
+        let lb = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("name".into(), "lb.example.com".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([{
+                "id": "rec-lb",
+                "name": "lb.example.com",
+                "type": "A",
+                "content": "203.0.113.10"
+            }])))
+            .create();
+        let origin = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("type".into(), "A".into()),
+                mockito::Matcher::UrlEncoded("name".into(), "origin.example.com".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([{
+                "id": "rec-origin",
+                "name": "origin.example.com",
+                "type": "A",
+                "content": "203.0.113.11"
+            }])))
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let records = client
+            .list_address_records(
+                &[
+                    "lb.example.com".to_string(),
+                    "origin.example.com".to_string(),
+                ],
+                &["A"],
+            )
+            .unwrap();
+        lb.assert();
+        origin.assert();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn backoff_doubles_each_attempt() {
+        assert_eq!(backoff_delay(1), Duration::from_millis(200));
+        assert_eq!(backoff_delay(2), Duration::from_millis(400));
+        assert_eq!(backoff_delay(3), Duration::from_millis(800));
+    }
+
+    #[test]
+    fn reads_error_body_from_http_error_status() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(401)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "success": false,
+                    "errors": [{ "message": "Authentication error" }],
+                    "result": null
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = CloudflareClient::new(server.url(), "token", "zone1");
+        let err = client.list_type("A", None).unwrap_err();
+        assert!(err.to_string().contains("Authentication error"));
     }
 }

@@ -17,6 +17,8 @@ services:
       CHANGE_FLARE_HEALTH_BIND: "0.0.0.0:8080"
     restart: unless-stopped
     read_only: true
+    tmpfs:
+      - /tmp
     user: "65532:65532"
     cap_drop:
       - ALL

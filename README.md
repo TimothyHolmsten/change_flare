@@ -6,7 +6,7 @@ This is an origin process, not a Cloudflare Worker. DNS writes go through the [C
 
 Each poll:
 
-1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, documentation, ULA, site-local, IPv4-mapped) are discarded.
+1. Discovers the public IPv4 and/or IPv6 address with STUN (`stun.cloudflare.com:3478`). Mapped addresses that are not globally routable (private, loopback, CGNAT, reserved `240/4`, documentation including `2001:db8::/32` and `3fff::/20`, ULA, site-local, IPv4-mapped) are discarded.
 2. Lists only the record types that match `CHANGE_FLARE_IP_MODE` (`A`, `AAAA`, or both). When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, records are filtered server-side with `name` (trailing dots stripped, duplicates dropped). Host labels, or a mix of labels and FQDNs, list the type once and match locally.
 3. PATCHes record **content** when it differs. Unchanged records and unchanged public IPs skip the write path. Transient Cloudflare `429`/`502`/`503`/`504` responses are retried (honors `Retry-After` in seconds, capped at 30s, with exponential backoff).
 
@@ -39,7 +39,7 @@ Do not commit `.env`. Tokens are never logged.
 
 ## Run on a node
 
-The process is a single blocking loop; send `SIGINT`/`SIGTERM` to drain and exit.
+The process is a single blocking loop; send `SIGINT`/`SIGTERM`/`SIGHUP` to drain and exit after the current 250ms sleep slice.
 
 ### Docker
 
@@ -49,7 +49,7 @@ CI publishes `ghcr.io/timothyholmsten/change_flare` on every push to `main` and 
 | --- | --- |
 | `latest` | `main`, and stable version tags |
 | `sha-<commit>` | every publish |
-| `0.2.4`, `0.2` | git tag `v0.2.4` |
+| `0.2.5`, `0.2` | git tag `v0.2.5` |
 
 The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the package visibility you chose.
 
