@@ -460,6 +460,35 @@ mod tests {
     }
 
     #[test]
+    fn always_reconcile_lists_when_ip_unchanged() {
+        let mut server = mockito::Server::new();
+        let a = server
+            .mock("GET", "/zones/zone1/dns_records")
+            .match_query(mockito::Matcher::UrlEncoded("type".into(), "A".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body(serde_json::json!([{
+                "id": "rec-a",
+                "name": "lb.example.com",
+                "type": "A",
+                "content": "203.0.113.10"
+            }])))
+            .expect(2)
+            .create();
+
+        let mut updater = Updater::new(test_config(server.url()), HealthState::new());
+        let ips = PublicIps {
+            v4: Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))),
+            v6: None,
+        };
+        updater.reconcile(ips.clone()).unwrap();
+        let second = updater.reconcile(ips).unwrap();
+        a.assert();
+        assert_eq!(second.examined, 1);
+        assert_eq!(second.skipped, 1);
+    }
+
+    #[test]
     fn reconcile_rejects_empty_public_ips() {
         let mut updater =
             Updater::new(test_config("http://127.0.0.1:1".into()), HealthState::new());

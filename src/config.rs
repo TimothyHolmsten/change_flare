@@ -114,8 +114,7 @@ fn required(name: &'static str) -> Result<String, Error> {
 fn first_env(names: &[&'static str]) -> Option<String> {
     names
         .iter()
-        .find_map(|name| std::env::var(name).ok())
-        .filter(|v| !v.is_empty())
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))
 }
 
 fn env_csv(name: &str) -> Vec<String> {
@@ -268,6 +267,47 @@ mod tests {
         let cfg = Config::from_env().unwrap();
         snapshot.restore();
         assert_eq!(cfg.api_token, "legacy-token");
+    }
+
+    #[test]
+    fn from_env_falls_back_when_token_empty() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let snapshot = EnvSnapshot::capture();
+
+        unsafe {
+            std::env::set_var("CLOUDFLARE_API_TOKEN", "");
+            std::env::set_var("CLOUDFLARE_API_KEY", "legacy-token");
+            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
+            std::env::remove_var("CHANGE_FLARE_IP_MODE");
+            std::env::remove_var("CLOUDFLARE_RECORD_NAMES");
+            std::env::remove_var("CLOUDFLARE_POLL_RATE");
+            std::env::remove_var("CHANGE_FLARE_HEALTH_BIND");
+            std::env::remove_var("CHANGE_FLARE_ALWAYS_RECONCILE");
+        }
+
+        let cfg = Config::from_env().unwrap();
+        snapshot.restore();
+        assert_eq!(cfg.api_token, "legacy-token");
+    }
+
+    #[test]
+    fn from_env_ipv6_only_and_health_off() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let snapshot = EnvSnapshot::capture();
+
+        unsafe {
+            std::env::set_var("CLOUDFLARE_API_TOKEN", "test-token");
+            std::env::remove_var("CLOUDFLARE_API_KEY");
+            std::env::set_var("CLOUDFLARE_ZONE_ID", "zone-1");
+            std::env::set_var("CHANGE_FLARE_IP_MODE", "ipv6");
+            std::env::set_var("CHANGE_FLARE_HEALTH_BIND", "off");
+        }
+
+        let cfg = Config::from_env().unwrap();
+        snapshot.restore();
+        assert!(!cfg.ipv4 && cfg.ipv6);
+        assert!(cfg.health_bind.is_none());
+        assert_eq!(cfg.dns_types(), ["AAAA"].as_slice());
     }
 
     #[test]

@@ -10,6 +10,7 @@ EnvironmentFile=/etc/change_flare.env
 ExecStart=/usr/local/bin/change_flare
 Restart=on-failure
 RestartSec=10
+UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

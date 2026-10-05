@@ -1,6 +1,6 @@
 [package]
 name = "change_flare"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 rust-version = "1.88"
 description = "Keep Cloudflare A/AAAA records in sync with this node's public IP"
@@ -8,7 +8,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
-ctrlc = "3.5"
+ctrlc = { version = "3.5", features = ["termination"] }
 dotenvy = "0.15.7"
 log = "0.4"
 env_logger = "0.11"
