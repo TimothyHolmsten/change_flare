@@ -26,7 +26,6 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      enableServiceLinks: false
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 15
