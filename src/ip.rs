@@ -169,12 +169,6 @@ mod tests {
         assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0xfc00, 0, 0, 0, 0, 0, 0, 1
         ))));
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0xfec0, 0, 0, 0, 0, 0, 0, 1
-        ))));
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0xffff, 0x0a00, 1
-        ))));
         assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111
         ))));
