@@ -14,7 +14,7 @@ pub use config::Config;
 pub use error::Error;
 pub use updater::Updater;
 
-/// Load config, start optional health listener, and poll until SIGINT/SIGTERM.
+/// Load config, start optional health listener, and poll until SIGINT/SIGTERM/SIGHUP.
 pub fn run() -> Result<(), Error> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 

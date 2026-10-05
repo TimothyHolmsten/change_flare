@@ -49,12 +49,12 @@ Do not convert it to Workers, Pages, or Wrangler unless the operator explicitly 
 - **PATCH, not PUT**: [Update DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/) (`PATCH /zones/{zone_id}/dns_records/{id}`) with `{ "content": "<ip>" }` so TTL/proxied/tags stay intact.
 - **Filter server-side** with `type=A` / `type=AAAA` and paginate (`per_page=100`). Request only families enabled by `CHANGE_FLARE_IP_MODE`. When every `CLOUDFLARE_RECORD_NAMES` entry is an FQDN, also pass `name=<fqdn>` (exact; trailing dots stripped; duplicates dropped). Mixing a host label with an FQDN lists the type once and matches locally. The current OpenAPI also documents nested `name.exact`; the string `name=` filter remains the compatible exact match used by cloudflare-go v4. Never rewrite CNAME/MX/TXT.
 - **Prefer `CLOUDFLARE_RECORD_NAMES`**. Updating every address record in a zone is supported for tiny/dedicated zones only; log a warning when the filter is empty.
-- **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS).
+- **Bearer API tokens**, not Global API keys. Required permission: **Zone DNS Edit** (dashboard template: Edit zone DNS). `CLOUDFLARE_API_TOKEN` wins when non-empty; an empty token falls through to `CLOUDFLARE_API_KEY`.
 - **No secrets in logs, tests, or docs**. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_API_KEY` are env-only; `.env` is gitignored.
 - **Clippy `unwrap_used` / `expect_used` / `unreachable` are deny** in library code. Allow them only in `#[cfg(test)]` modules.
 - **Minimum poll interval is 60s**. On STUN/API failure, log and sleep — never busy-loop. Retry Cloudflare `429`/`502`/`503`/`504` a few times: sleep `Retry-After` (seconds, cap 30s) or exponential backoff (`200ms * 2^(attempt-1)`), then retry. Do not retry without sleeping. REST responses also include IETF `Ratelimit` remaining-quota headers; this agent does not need remaining-quota pacing because the poll floor is 60s.
 - **Default IP mode is IPv4**. Dual-stack is opt-in (`CHANGE_FLARE_IP_MODE=both`) because many origins are v4-only.
-- **STUN results must be globally routable**. Drop loopback, RFC1918, CGNAT (`100.64/10`), link-local, unique-local, and documentation ranges so they are never PATCHed into DNS.
+- **STUN results must be globally routable**. Drop loopback, RFC1918, CGNAT (`100.64/10`), reserved `240.0.0.0/4`, link-local, unique-local, IPv4-mapped, and documentation ranges (`2001:db8::/32`, RFC 9637 `3fff::/20`) so they are never PATCHed into DNS. `Ipv4Addr::is_shared` / `is_benchmarking` / `Ipv6Addr::is_documentation` / `is_unicast_global` remain unstable (`feature(ip)`); keep the local checks.
 
 ## Tests
 
@@ -78,4 +78,4 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 - Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`.
 - systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes (`ProtectKernelLogs`, `ProtectProc=invisible`, empty `CapabilityBoundingSet`).
 - Compose example: `docker compose -f deploy/compose.yaml up --build` (host network + `.env`).
-- SIGINT/SIGTERM stop the poll loop after the current sleep slice (250ms).
+- SIGINT/SIGTERM/SIGHUP stop the poll loop after the current sleep slice (250ms). `ctrlc` needs the `termination` feature so Kubernetes and systemd SIGTERM match that drain.

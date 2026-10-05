@@ -105,10 +105,11 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         return false;
     }
     let octets = ip.octets();
-    // 100.64.0.0/10 (CGNAT) and 198.18.0.0/15 (benchmarking)
+    // 100.64.0.0/10 (CGNAT), 198.18.0.0/15 (benchmarking), 240.0.0.0/4 (reserved)
     let cgnat = octets[0] == 100 && octets[1] & 0xc0 == 64;
     let benchmarking = octets[0] == 198 && octets[1] & 0xfe == 18;
-    !cgnat && !benchmarking
+    let reserved = octets[0] >= 240;
+    !cgnat && !benchmarking && !reserved
 }
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
@@ -124,8 +125,10 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         return false;
     }
     let segments = ip.segments();
-    // 2001:db8::/32 documentation; fec0::/10 deprecated site-local
-    let documentation = segments[0] == 0x2001 && segments[1] == 0xdb8;
+    // 2001:db8::/32 (RFC 3849) and 3fff::/20 (RFC 9637) documentation;
+    // fec0::/10 deprecated site-local.
+    let documentation = (segments[0] == 0x2001 && segments[1] == 0xdb8)
+        || (segments[0] == 0x3fff && segments[1] <= 0x0fff);
     let site_local = (segments[0] & 0xffc0) == 0xfec0;
     !(documentation || site_local)
 }
@@ -183,5 +186,15 @@ mod tests {
         assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
         assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::BROADCAST)));
         assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(240, 0, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x3fff, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x3fff, 0x0fff, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x3fff, 0x1000, 0, 0, 0, 0, 0, 1
+        ))));
     }
 }
