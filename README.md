@@ -47,11 +47,11 @@ CI publishes `ghcr.io/timothyholmsten/change_flare` on every push to `main` and 
 
 | Tag | When |
 | --- | --- |
-| `latest` | `main`, and stable version tags such as `v0.2.2` |
+| `latest` | `main`, and stable version tags |
 | `sha-<commit>` | every publish |
 | `0.2.5`, `0.2` | git tag `v0.2.5` |
 
-The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the visibility you chose.
+The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the package visibility you chose.
 
 ```bash
 docker pull ghcr.io/timothyholmsten/change_flare:latest
@@ -86,7 +86,7 @@ sudo systemctl enable --now change-flare
 
 ### Kubernetes
 
-Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (startup + liveness) and `/readyz` (ready after the first successful sync). Keep `replicas: 1` for a given DNS name; multiple writers would race.
+Manifests live in `deploy/kubernetes.yaml`. The example uses `hostNetwork` so STUN sees the node's public IP, `dnsPolicy: ClusterFirstWithHostNet` so `api.cloudflare.com` still resolves, `enableServiceLinks: false` to keep the env free of Kubernetes service URLs, and `CHANGE_FLARE_HEALTH_BIND=0.0.0.0:8080` so kubelet can probe `/healthz` (startup + liveness) and `/readyz` (ready after the first successful sync). `/readyz` includes `X-Last-Success-Epoch`. Keep `replicas: 1` for a given DNS name; multiple writers would race.
 
 ## Develop
 

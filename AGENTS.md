@@ -68,14 +68,14 @@ Match list queries with `mockito::Matcher::UrlEncoded("type", "A")` (not a regex
 - Edit: `PATCH /zones/{zone_id}/dns_records/{dns_record_id}`
 - Auth: `Authorization: Bearer <token>`
 - STUN: `stun.cloudflare.com:3478` (IPv4 and IPv6 as needed)
-- Client API rate limit is 1,200 requests / 5 minutes per user; a 429 is retried. `Retry-After` is seconds until capacity. `Ratelimit` remaining quota is informational for this poller.
+- Client API rate limit is 1,200 requests / 5 minutes per user; a 429 is retried.
 
 ## Cloud-native expectations
 
 - Config from environment (and optional `.env` for local runs).
 - Container image is non-root distroless. Example k8s pod uses `hostNetwork` so STUN sees the node public IP.
 - CI publishes `ghcr.io/timothyholmsten/change_flare` on pushes to `main` and on `vX.Y.Z` tags (`latest`, `sha-<commit>`, and semver). Pull requests and the weekly schedule build the image and do not push it.
-- Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`.
+- Kubernetes probes hit `/healthz` (process up) and `/readyz` (at least one successful sync). `/readyz` includes `X-Last-Success-Epoch`. Probe IO on the health socket times out after 2s. Example pod sets `enableServiceLinks: false`.
 - systemd unit in `deploy/change-flare.service` for hosts that are not in Kubernetes (`ProtectKernelLogs`, `ProtectProc=invisible`, empty `CapabilityBoundingSet`).
 - Compose example: `docker compose -f deploy/compose.yaml up --build` (host network + `.env`).
 - SIGINT/SIGTERM/SIGHUP stop the poll loop after the current sleep slice (250ms). `ctrlc` needs the `termination` feature so Kubernetes and systemd SIGTERM match that drain.

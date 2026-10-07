@@ -183,11 +183,13 @@ mod tests {
             always_reconcile: false,
             health_bind: None,
         };
-        assert_eq!(cfg.dns_types(), ["A"].as_slice());
+        assert_eq!(cfg.dns_types(), &["A"]);
         cfg.ipv6 = true;
-        assert_eq!(cfg.dns_types(), ["A", "AAAA"].as_slice());
+        assert_eq!(cfg.dns_types(), &["A", "AAAA"]);
         cfg.ipv4 = false;
-        assert_eq!(cfg.dns_types(), ["AAAA"].as_slice());
+        assert_eq!(cfg.dns_types(), &["AAAA"]);
+        cfg.ipv6 = false;
+        assert_eq!(cfg.dns_types(), &[] as &[&str]);
     }
 
     #[test]

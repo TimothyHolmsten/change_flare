@@ -134,28 +134,20 @@ mod tests {
         let serving = state.clone();
         thread::spawn(move || serve(listener, serving));
 
-        let (status, body, raw) = http_get(addr, "/healthz");
+        let (status, body, epoch) = http_get(addr, "/healthz");
         assert_eq!(status, 200);
         assert_eq!(body, "ok");
-        assert!(raw.to_ascii_lowercase().contains("x-last-success-epoch: 0"));
+        assert_eq!(epoch, 0);
 
-        let (status, body, _) = http_get(addr, "/readyz");
+        let (status, body, epoch) = http_get(addr, "/readyz");
         assert_eq!(status, 503);
         assert_eq!(body, "not ready");
+        assert_eq!(epoch, 0);
 
         state.mark_success();
-        let (status, body, raw) = http_get(addr, "/readyz");
+        let (status, body, epoch) = http_get(addr, "/readyz");
         assert_eq!(status, 200);
         assert_eq!(body, "ready");
-        let epoch = raw
-            .lines()
-            .find_map(|line| {
-                line.to_ascii_lowercase()
-                    .strip_prefix("x-last-success-epoch:")
-                    .map(|value| value.trim().to_string())
-            })
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0);
         assert!(epoch > 0);
 
         let (status, _, _) = http_get(addr, "/livez");
@@ -165,8 +157,14 @@ mod tests {
         assert_eq!(status, 404);
     }
 
-    fn http_get(addr: SocketAddr, path: &str) -> (u16, String, String) {
+    fn http_get(addr: SocketAddr, path: &str) -> (u16, String, u64) {
         let mut stream = TcpStream::connect(addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         stream
             .write_all(
                 format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -180,12 +178,17 @@ mod tests {
             .nth(1)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        let epoch = buf
+            .lines()
+            .find_map(|line| line.strip_prefix("X-Last-Success-Epoch: "))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
         let body = buf
             .split("\r\n\r\n")
             .nth(1)
             .unwrap_or_default()
             .trim()
             .to_string();
-        (status, body, buf)
+        (status, body, epoch)
     }
 }
