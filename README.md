@@ -49,7 +49,7 @@ CI publishes `ghcr.io/timothyholmsten/change_flare` on every push to `main` and 
 | --- | --- |
 | `latest` | `main`, and stable version tags |
 | `sha-<commit>` | every publish |
-| `0.2.5`, `0.2` | git tag `v0.2.5` |
+| `0.2.6`, `0.2` | git tag `v0.2.6` |
 
 The first publish creates a private package. Set that package's visibility to public so a node can pull it anonymously. Later publishes keep the package visibility you chose.
 
